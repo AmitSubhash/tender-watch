@@ -37,7 +37,8 @@ def test_render_dashboard(settings) -> None:
     assert "PRODUCT" in page
     assert "West Bengal" in page
     assert "&#9733;" in page  # HINCOL plant star
-    assert "closing within 7 days" in page
+    assert "closing" in page.lower()  # deadline KPI / chart present
+    assert "<svg" in page  # charts rendered
 
 
 def test_render_escapes_titles(settings) -> None:

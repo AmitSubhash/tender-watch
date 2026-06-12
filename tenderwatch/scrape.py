@@ -256,9 +256,7 @@ def scrape_gepnic_portal(
             recent = _fetch_recent_tenders(client, portal, settings)
             _ingest_rows(db, portal.id, recent, matcher, stats)
             recent_ok = True
-            logger.info(
-                "[%s] recent: %d rows, %d new", portal.id, len(recent), stats.new
-            )
+            logger.info("[%s] recent: %d rows, %d new", portal.id, len(recent), stats.new)
         except Exception as exc:
             stats.error = f"recent-listing fetch failed: {exc}"
             logger.warning("[%s] recent listing failed: %s", portal.id, exc)

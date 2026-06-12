@@ -1,162 +1,33 @@
-"""Static HTML dashboard generation from the tender database."""
+"""Static HTML dashboard generation from the tender database.
+
+Charts are rendered as inline SVG generated server-side from the data, so
+the dashboard is fully self-contained (no JavaScript chart library, no CDN)
+and renders identically on GitHub Pages and in a screenshot.
+"""
 
 from __future__ import annotations
 
 import html
+import math
 import sqlite3
+from collections import Counter
 from datetime import datetime, timedelta
 
 from .config import PortalConfig, Settings
 from .db import IST, NOW_FORMAT, Database
 
-PAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="900">
-<title>{brand}</title>
-<style>
-  :root {{
-    --bg: #f4f6f8; --card: #ffffff; --ink: #14233a; --muted: #5f7088;
-    --accent: #0b5fa5; --new: #047857; --warn: #b45309; --danger: #b91c1c;
-    --product: #7c2d12; --product-bg: #fde68a; --border: #dde5ee; --ink-inv: #f8fafc;
-  }}
-  * {{ box-sizing: border-box; }}
-  body {{ margin: 0; font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
-         background: var(--bg); color: var(--ink); }}
-  header {{ background: #0b2440; color: var(--ink-inv); padding: 14px 24px;
-            display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }}
-  header h1 {{ margin: 0; font-size: 19px; letter-spacing: 0.01em; }}
-  header .sub {{ color: #9fb3cc; font-size: 12.5px; }}
-  main {{ max-width: 1320px; margin: 0 auto; padding: 18px 24px 60px; }}
-  .cards {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }}
-  .card {{ background: var(--card); border: 1px solid var(--border);
-           border-radius: 10px; padding: 12px 18px; min-width: 140px; }}
-  .card.hero {{ border-color: var(--accent); box-shadow: 0 1px 0 var(--accent) inset; }}
-  .card .num {{ font-size: 26px; font-weight: 700; }}
-  .card .num.product {{ color: var(--product); }}
-  .card .num.urgent {{ color: var(--danger); }}
-  .card .label {{ color: var(--muted); font-size: 12px; }}
-  .controls {{ display: flex; gap: 8px; margin: 10px 0 14px; flex-wrap: wrap; align-items: center; }}
-  .controls input {{ flex: 1 1 300px; padding: 8px 12px; border: 1px solid var(--border);
-                     border-radius: 8px; font-size: 14px; }}
-  .controls button {{ padding: 8px 13px; border: 1px solid var(--border); cursor: pointer;
-                      border-radius: 8px; background: var(--card); font-size: 13px; }}
-  .controls button.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
-  table {{ width: 100%; border-collapse: collapse; background: var(--card);
-           border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
-  th {{ text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
-        color: var(--muted); padding: 10px 12px; border-bottom: 2px solid var(--border);
-        background: #fbfcfe; position: sticky; top: 0; }}
-  td {{ padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
-  tr:hover td {{ background: #eef4fb; }}
-  .badge {{ display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px;
-            font-weight: 700; margin-right: 4px; }}
-  .badge.new {{ background: #d1fae5; color: var(--new); }}
-  .badge.product {{ background: var(--product-bg); color: var(--product); }}
-  .badge.road {{ background: #e2e8f0; color: #475569; }}
-  .state {{ font-weight: 600; }}
-  .plant {{ color: var(--product); }}
-  .days {{ font-weight: 700; white-space: nowrap; }}
-  .days.red {{ color: var(--danger); }}
-  .days.amber {{ color: var(--warn); }}
-  .days.green {{ color: var(--new); }}
-  .muted {{ color: var(--muted); font-size: 12px; }}
-  a {{ color: var(--accent); text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
-  h2 {{ font-size: 15px; margin: 26px 0 10px; }}
-  .health td, .health th {{ padding: 6px 12px; font-size: 12.5px; }}
-  .ok {{ color: var(--new); font-weight: 600; }}
-  .error {{ color: var(--danger); font-weight: 600; }}
-</style>
-</head>
-<body>
-<header>
-  <h1>{brand}</h1>
-  <span class="sub">{subtitle}</span>
-  <span class="sub">refreshed {generated} IST &middot; {portal_count} portals</span>
-</header>
-<main>
-  <div class="cards">
-    <div class="card hero"><div class="num urgent">{closing_7d}</div>
-      <div class="label">closing within 7 days</div></div>
-    <div class="card"><div class="num product">{open_product}</div>
-      <div class="label">open product tenders</div></div>
-    <div class="card"><div class="num">{open_matched}</div>
-      <div class="label">open matching tenders</div></div>
-    <div class="card"><div class="num">{new_24h}</div>
-      <div class="label">new in 24h</div></div>
-    <div class="card"><div class="num">{total}</div>
-      <div class="label">tenders tracked</div></div>
-  </div>
-  <div class="controls">
-    <input id="search" type="search" placeholder="Filter by title, organisation, state, tender id...">
-    <button id="fAll" class="active" onclick="setFilter('all')">All</button>
-    <button id="fProduct" onclick="setFilter('product')">Product only</button>
-    <button id="fClosing" onclick="setFilter('closing')">Closing &le;7d</button>
-    <span style="width:8px"></span>
-    <button id="sNew" class="active" onclick="sortRows('new')">Newest</button>
-    <button id="sClose" onclick="sortRows('close')">Closing soon</button>
-  </div>
-  <table id="tenders">
-    <thead><tr>
-      <th></th><th>Title</th><th>Organisation</th><th>State</th>
-      <th>Published</th><th>Closing</th><th>Left</th>
-    </tr></thead>
-    <tbody>
-{rows}
-    </tbody>
-  </table>
-  <h2>Portal health (last run)</h2>
-  <table class="health">
-    <thead><tr><th>Portal</th><th>State</th><th>Status</th><th>Finished</th>
-      <th>Rows seen</th><th>New</th><th>Error</th></tr></thead>
-    <tbody>
-{health_rows}
-    </tbody>
-  </table>
-  <p class="muted">Public government e-procurement listings. Product tenders name a
-  HINCOL product or bituminous binder; road tenders are general pavement work.
-  ★ marks a HINCOL plant state. GePNIC rows open the portal home (detail pages
-  are session bound; search the tender id there); CPPP rows deep-link.</p>
-</main>
-<script>
-  const search = document.getElementById('search');
-  const tbody = document.querySelector('#tenders tbody');
-  let filter = 'all';
-  function apply() {{
-    const q = search.value.toLowerCase();
-    for (const tr of tbody.rows) {{
-      const textOk = tr.textContent.toLowerCase().includes(q);
-      let fOk = true;
-      if (filter === 'product') fOk = tr.dataset.tier === 'product';
-      else if (filter === 'closing') fOk = parseFloat(tr.dataset.days) <= 7 && parseFloat(tr.dataset.days) >= 0;
-      tr.style.display = (textOk && fOk) ? '' : 'none';
-    }}
-  }}
-  function setFilter(f) {{
-    filter = f;
-    for (const id of ['fAll','fProduct','fClosing'])
-      document.getElementById(id).classList.remove('active');
-    document.getElementById({{all:'fAll',product:'fProduct',closing:'fClosing'}}[f]).classList.add('active');
-    apply();
-  }}
-  function sortRows(mode) {{
-    const rows = Array.from(tbody.rows);
-    rows.sort((a, b) => {{
-      if (mode === 'new') return (b.dataset.seen||'').localeCompare(a.dataset.seen||'');
-      return (parseFloat(a.dataset.days) || 1e9) - (parseFloat(b.dataset.days) || 1e9);
-    }});
-    rows.forEach(r => tbody.appendChild(r));
-    document.getElementById('sNew').classList.toggle('active', mode === 'new');
-    document.getElementById('sClose').classList.toggle('active', mode === 'close');
-  }}
-  search.addEventListener('input', apply);
-</script>
-</body>
-</html>
-"""
+# ---------------------------------------------------------------------------
+# colour system
+# ---------------------------------------------------------------------------
+C_INK = "#14233a"
+C_MUTED = "#64748b"
+C_ACCENT = "#0b5fa5"
+C_PRODUCT = "#c2410c"
+C_ROAD = "#64748b"
+C_RED = "#dc2626"
+C_AMBER = "#d97706"
+C_GREEN = "#059669"
+C_GRID = "#e7edf4"
 
 
 def _days_left(closing: str | None, now: datetime) -> float | None:
@@ -168,6 +39,103 @@ def _days_left(closing: str | None, now: datetime) -> float | None:
     except ValueError:
         return None
     return (closing_dt - now).total_seconds() / 86400
+
+
+def _urgency_colour(days: float) -> str:
+    return C_RED if days < 3 else (C_AMBER if days < 7 else C_ACCENT)
+
+
+def _svg_closing_histogram(rows: list[sqlite3.Row], now: datetime) -> str:
+    """Bars of how many open matched tenders close on each of the next 14 days."""
+    horizon = 14
+    buckets = [0] * horizon
+    for r in rows:
+        d = _days_left(r["closing"], now)
+        if d is not None and 0 <= d < horizon:
+            buckets[int(d)] += 1
+    peak = max(buckets) or 1
+    w, h, pad_b, pad_l = 360, 150, 22, 26
+    plot_h = h - pad_b - 8
+    bar_w = (w - pad_l - 8) / horizon
+    bars = []
+    for i, count in enumerate(buckets):
+        bh = (count / peak) * plot_h
+        x = pad_l + i * bar_w
+        y = 8 + plot_h - bh
+        colour = _urgency_colour(i + 0.5)
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w - 3:.1f}" height="{bh:.1f}" '
+            f'rx="2" fill="{colour}"><title>{count} closing in {i}-{i + 1}d</title></rect>'
+        )
+        if count:
+            bars.append(
+                f'<text x="{x + (bar_w - 3) / 2:.1f}" y="{y - 3:.1f}" font-size="9" '
+                f'fill="{C_MUTED}" text-anchor="middle">{count}</text>'
+            )
+    for lbl in (0, 7, 13):
+        x = pad_l + lbl * bar_w + (bar_w - 3) / 2
+        bars.append(
+            f'<text x="{x:.1f}" y="{h - 6}" font-size="9" fill="{C_MUTED}" '
+            f'text-anchor="middle">{lbl}d</text>'
+        )
+    return (
+        f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" '
+        f'aria-label="tenders closing per day">{"".join(bars)}</svg>'
+    )
+
+
+def _svg_state_bars(state_counts: list[tuple[str, int, bool]]) -> str:
+    """Horizontal bars of the top states by open matched tender count.
+
+    Each item is (state, count, is_plant_state).
+    """
+    top = state_counts[:11]
+    peak = max((c for _, c, _ in top), default=1)
+    row_h, w, label_w = 18, 360, 118
+    h = len(top) * row_h + 6
+    bar_max = w - label_w - 34
+    parts = []
+    for i, (state, count, is_plant) in enumerate(top):
+        y = i * row_h + 4
+        bw = max(2, (count / peak) * bar_max)
+        colour = C_PRODUCT if is_plant else C_ACCENT
+        star = " ★" if is_plant else ""
+        parts.append(
+            f'<text x="0" y="{y + 11}" font-size="10.5" fill="{C_INK}">'
+            f"{html.escape(state[:16])}{star}</text>"
+            f'<rect x="{label_w}" y="{y + 2}" width="{bw:.1f}" height="{row_h - 7}" '
+            f'rx="2" fill="{colour}"/>'
+            f'<text x="{label_w + bw + 4:.1f}" y="{y + 11}" font-size="10" '
+            f'fill="{C_MUTED}">{count}</text>'
+        )
+    return (
+        f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" '
+        f'aria-label="top states by open tenders">{"".join(parts)}</svg>'
+    )
+
+
+def _svg_tier_donut(product: int, road: int) -> str:
+    """Donut showing the product vs road split of open matched tenders."""
+    total = product + road or 1
+    frac = product / total
+    r, cx, cy, sw = 46, 60, 60, 18
+    circ = 2 * math.pi * r
+    prod_len = frac * circ
+    return f"""<svg viewBox="0 0 240 120" width="100%" role="img" aria-label="tier split">
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{C_ROAD}" stroke-width="{sw}"/>
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{C_PRODUCT}" stroke-width="{sw}"
+    stroke-dasharray="{prod_len:.1f} {circ - prod_len:.1f}" stroke-dashoffset="{circ / 4:.1f}"
+    transform="rotate(-90 {cx} {cy})" stroke-linecap="butt"/>
+  <text x="{cx}" y="{cy - 2}" font-size="20" font-weight="700" fill="{C_PRODUCT}"
+    text-anchor="middle">{product}</text>
+  <text x="{cx}" y="{cy + 14}" font-size="9" fill="{C_MUTED}" text-anchor="middle">product</text>
+  <g font-size="11.5" fill="{C_INK}">
+    <rect x="130" y="44" width="11" height="11" rx="2" fill="{C_PRODUCT}"/>
+    <text x="147" y="53">Product {product}</text>
+    <rect x="130" y="64" width="11" height="11" rx="2" fill="{C_ROAD}"/>
+    <text x="147" y="73">Road {road}</text>
+  </g>
+</svg>"""
 
 
 def _days_cell(days: float | None) -> str:
@@ -204,9 +172,7 @@ def _tender_row(
         state_html += ' <span class="plant" title="HINCOL plant state">&#9733;</span>'
     is_new = (row["first_seen"] or "") >= new_cutoff
     tier = row["tier"] or "road"
-    badges = ""
-    if is_new:
-        badges += '<span class="badge new">NEW</span>'
+    badges = '<span class="badge new">NEW</span>' if is_new else ""
     badges += (
         '<span class="badge product">PRODUCT</span>'
         if tier == "product"
@@ -228,13 +194,32 @@ def _tender_row(
     )
 
 
+def _build_charts(tenders: list[sqlite3.Row], now: datetime, meta, counts) -> dict:
+    """Compute chart SVGs and headline figures from the open matched tenders."""
+    state_counter: Counter = Counter()
+    plant_states = set()
+    for r in tenders:
+        pm = meta.get(r["portal"])
+        state = pm.state if pm else r["portal"]
+        state_counter[state] += 1
+        if pm and pm.hincol == "plant":
+            plant_states.add(state)
+    state_rows = [(s, c, s in plant_states) for s, c in state_counter.most_common()]
+    closing_7d = sum(
+        1 for r in tenders if (d := _days_left(r["closing"], now)) is not None and 0 <= d <= 7
+    )
+    road = max(0, counts["open_matched"] - counts["open_product"])
+    return {
+        "hist": _svg_closing_histogram(tenders, now),
+        "states": _svg_state_bars(state_rows),
+        "donut": _svg_tier_donut(counts["open_product"], road),
+        "closing_7d": closing_7d,
+        "state_count": len(state_counter),
+    }
+
+
 def render_dashboard(settings: Settings):
     """Generate the static dashboard HTML file.
-
-    Parameters
-    ----------
-    settings : Settings
-        Provides database path, output path, branding, and display options.
 
     Returns
     -------
@@ -246,13 +231,12 @@ def render_dashboard(settings: Settings):
     new_cutoff = (now - timedelta(hours=settings.new_badge_hours)).strftime(NOW_FORMAT)
     meta = settings.portal_meta()
     tenders = db.open_matched_tenders(limit=settings.dashboard_max_rows)
-    rows_html = "\n".join(_tender_row(r, new_cutoff, now, meta) for r in tenders)
-    closing_7d = sum(
-        1 for r in tenders if (d := _days_left(r["closing"], now)) is not None and 0 <= d <= 7
-    )
     counts = db.summary_counts()
     new_24h = len(db.new_matched_since(24))
+    charts = _build_charts(tenders, now, meta, counts)
+    rows_html = "\n".join(_tender_row(r, new_cutoff, now, meta) for r in tenders)
     health = db.portal_health()
+    ok_portals = sum(1 for h in health if h["status"] == "ok")
     health_html = "\n".join(
         (
             f"    <tr><td>{html.escape(h['portal'])}</td>"
@@ -261,7 +245,7 @@ def render_dashboard(settings: Settings):
             f"{html.escape(h['status'] or '')}</td>"
             f"<td>{html.escape(h['finished'] or '')}</td>"
             f"<td>{h['seen']}</td><td>{h['new']}</td>"
-            f'<td class="muted">{html.escape((h["error"] or "")[:120])}</td></tr>'
+            f'<td class="muted">{html.escape((h["error"] or "")[:90])}</td></tr>'
         )
         for h in health
     )
@@ -270,11 +254,16 @@ def render_dashboard(settings: Settings):
         subtitle=html.escape(settings.dashboard_subtitle),
         generated=now.strftime("%d %b %Y, %H:%M"),
         portal_count=len(health),
-        closing_7d=closing_7d,
+        ok_portals=ok_portals,
+        state_count=charts["state_count"],
+        closing_7d=charts["closing_7d"],
         open_product=counts["open_product"],
         open_matched=counts["open_matched"],
         new_24h=new_24h,
         total=counts["total"],
+        hist_svg=charts["hist"],
+        states_svg=charts["states"],
+        donut_svg=charts["donut"],
         rows=rows_html,
         health_rows=health_html,
     )
@@ -282,3 +271,145 @@ def render_dashboard(settings: Settings):
     settings.dashboard_output.write_text(page)
     db.close()
     return settings.dashboard_output
+
+
+PAGE_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="900">
+<title>{brand}</title>
+<style>
+  :root {{
+    --bg:#eef2f7; --panel:#ffffff; --ink:#14233a; --muted:#64748b;
+    --accent:#0b5fa5; --product:#c2410c; --new:#059669; --warn:#d97706;
+    --danger:#dc2626; --border:#dce4ee;
+  }}
+  *{{box-sizing:border-box}}
+  body{{margin:0;font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
+    background:var(--bg);color:var(--ink)}}
+  header{{background:linear-gradient(110deg,#0a2540,#0b3a66 60%,#0b5fa5);
+    color:#fff;padding:18px 28px}}
+  header .row{{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
+    max-width:1340px;margin:0 auto}}
+  header h1{{margin:0;font-size:20px;font-weight:700;letter-spacing:.2px}}
+  header .sub{{color:#aec6e2;font-size:12.5px}}
+  main{{max-width:1340px;margin:0 auto;padding:20px 28px 64px}}
+  .kpis{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}}
+  .kpi{{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+    padding:14px 16px}}
+  .kpi .n{{font-size:27px;font-weight:750;line-height:1}}
+  .kpi .l{{color:var(--muted);font-size:11.5px;margin-top:5px;text-transform:uppercase;
+    letter-spacing:.04em}}
+  .kpi.hero{{background:linear-gradient(180deg,#fff,#fff6ef);border-color:#f2c9a6}}
+  .kpi.hero .n{{color:var(--danger)}}
+  .kpi .n.prod{{color:var(--product)}}
+  .charts{{display:grid;grid-template-columns:1.35fr 1.3fr .9fr;gap:12px;margin-bottom:18px}}
+  .panel{{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px}}
+  .panel h3{{margin:0 0 10px;font-size:12.5px;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.05em;font-weight:650}}
+  .controls{{display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap;align-items:center}}
+  .controls input{{flex:1 1 300px;padding:9px 13px;border:1px solid var(--border);
+    border-radius:9px;font-size:14px;background:var(--panel)}}
+  .controls button{{padding:8px 13px;border:1px solid var(--border);cursor:pointer;
+    border-radius:9px;background:var(--panel);font-size:13px;color:var(--ink)}}
+  .controls button.active{{background:var(--accent);color:#fff;border-color:var(--accent)}}
+  table{{width:100%;border-collapse:collapse;background:var(--panel);
+    border:1px solid var(--border);border-radius:12px;overflow:hidden}}
+  th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--muted);padding:11px 12px;border-bottom:2px solid var(--border);
+    background:#f7fafd;position:sticky;top:0}}
+  td{{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}}
+  tr:hover td{{background:#f1f6fc}}
+  .badge{{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;
+    font-weight:700;margin-right:4px}}
+  .badge.new{{background:#d1fae5;color:var(--new)}}
+  .badge.product{{background:#fde7d3;color:var(--product)}}
+  .badge.road{{background:#e8edf3;color:#52617a}}
+  .state{{font-weight:600}} .plant{{color:var(--product)}}
+  .days{{font-weight:750;white-space:nowrap}}
+  .days.red{{color:var(--danger)}} .days.amber{{color:var(--warn)}} .days.green{{color:var(--new)}}
+  .muted{{color:var(--muted);font-size:12px}}
+  a{{color:var(--accent);text-decoration:none}} a:hover{{text-decoration:underline}}
+  h2{{font-size:15px;margin:26px 0 10px}}
+  .health td,.health th{{padding:6px 12px;font-size:12.5px}}
+  .ok{{color:var(--new);font-weight:600}} .error{{color:var(--danger);font-weight:600}}
+  @media(max-width:900px){{.kpis{{grid-template-columns:repeat(2,1fr)}}.charts{{grid-template-columns:1fr}}}}
+</style>
+</head>
+<body>
+<header><div class="row">
+  <h1>{brand}</h1>
+  <span class="sub">{subtitle}</span>
+  <span class="sub">refreshed {generated} IST &middot; {ok_portals}/{portal_count} portals live &middot; {state_count} states</span>
+</div></header>
+<main>
+  <div class="kpis">
+    <div class="kpi hero"><div class="n">{closing_7d}</div><div class="l">closing &le; 7 days</div></div>
+    <div class="kpi"><div class="n prod">{open_product}</div><div class="l">product tenders</div></div>
+    <div class="kpi"><div class="n">{open_matched}</div><div class="l">open matching</div></div>
+    <div class="kpi"><div class="n">{new_24h}</div><div class="l">new in 24h</div></div>
+    <div class="kpi"><div class="n">{total}</div><div class="l">tracked</div></div>
+  </div>
+  <div class="charts">
+    <div class="panel"><h3>Bid deadlines &mdash; tenders closing per day (next 14d)</h3>{hist_svg}</div>
+    <div class="panel"><h3>Open tenders by state &nbsp;<span style="color:#c2410c">&#9733; plant</span></h3>{states_svg}</div>
+    <div class="panel"><h3>Product vs road</h3>{donut_svg}</div>
+  </div>
+  <div class="controls">
+    <input id="search" type="search" placeholder="Filter by title, organisation, state, tender id...">
+    <button id="fAll" class="active" onclick="setFilter('all')">All</button>
+    <button id="fProduct" onclick="setFilter('product')">Product only</button>
+    <button id="fClosing" onclick="setFilter('closing')">Closing &le;7d</button>
+    <span style="width:6px"></span>
+    <button id="sNew" class="active" onclick="sortRows('new')">Newest</button>
+    <button id="sClose" onclick="sortRows('close')">Closing soon</button>
+  </div>
+  <table id="tenders">
+    <thead><tr><th></th><th>Title</th><th>Organisation</th><th>State</th>
+      <th>Published</th><th>Closing</th><th>Left</th></tr></thead>
+    <tbody>
+{rows}
+    </tbody>
+  </table>
+  <h2>Portal health (last run)</h2>
+  <table class="health">
+    <thead><tr><th>Portal</th><th>State</th><th>Status</th><th>Finished</th>
+      <th>Seen</th><th>New</th><th>Error</th></tr></thead>
+    <tbody>
+{health_rows}
+    </tbody>
+  </table>
+  <p class="muted">Public government e-procurement listings. Product tenders name a HINCOL
+  product or bituminous binder; road tenders are general pavement work. &#9733; marks a
+  HINCOL plant state. GePNIC rows open the portal home (detail pages are session bound;
+  search the tender id there); CPPP rows deep-link.</p>
+</main>
+<script>
+  const search=document.getElementById('search'),tbody=document.querySelector('#tenders tbody');
+  let filter='all';
+  function apply(){{
+    const q=search.value.toLowerCase();
+    for(const tr of tbody.rows){{
+      const t=tr.textContent.toLowerCase().includes(q);
+      let f=true;
+      if(filter==='product')f=tr.dataset.tier==='product';
+      else if(filter==='closing'){{const d=parseFloat(tr.dataset.days);f=d>=0&&d<=7;}}
+      tr.style.display=(t&&f)?'':'none';
+    }}
+  }}
+  function setFilter(f){{filter=f;
+    for(const id of ['fAll','fProduct','fClosing'])document.getElementById(id).classList.remove('active');
+    document.getElementById({{all:'fAll',product:'fProduct',closing:'fClosing'}}[f]).classList.add('active');apply();}}
+  function sortRows(m){{const rows=Array.from(tbody.rows);
+    rows.sort((a,b)=>m==='new'?(b.dataset.seen||'').localeCompare(a.dataset.seen||'')
+      :(parseFloat(a.dataset.days)||1e9)-(parseFloat(b.dataset.days)||1e9));
+    rows.forEach(r=>tbody.appendChild(r));
+    document.getElementById('sNew').classList.toggle('active',m==='new');
+    document.getElementById('sClose').classList.toggle('active',m==='close');}}
+  search.addEventListener('input',apply);
+</script>
+</body>
+</html>
+"""
