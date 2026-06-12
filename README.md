@@ -56,24 +56,26 @@ deliberately not scraped: they repackage the same source data pulled here.
 
 ## How it works
 
-1. Each GePNIC portal exposes a captcha-free organisation directory
-   (`FrontEndTendersByOrganisation`) listing every organisation with its
-   live tender count and a session-bound link to that organisation's full
-   tender list (which arrives on a single page). The scraper drills an
-   organisation when its count changed, OR it has not been re-checked in
-   `force_redrill_hours` (default 24) — the time-based re-scan catches
-   "churn" (one tender closes as another opens, leaving the count
-   unchanged) that a pure count-diff would miss.
-2. The CPPP aggregate feed is paged newest-first; paging stops once a full
-   page contains nothing new.
-3. Everything is upserted into SQLite keyed on (portal, tender id), so
+GePNIC portals are scraped two ways, because NIC soft-throttles the
+expensive per-organisation drilling at scale (it returns an "ErrorNotice"
+page after a burst of drill requests from one IP):
+
+1. **Incremental (every run):** one captcha-free GET per portal to
+   `FrontEndAdvancedSearchResult`, which returns the ~20 most recently
+   published tenders newest-first, with no per-organisation drilling. This
+   is the throttle-resilient monitoring path and works on every GePNIC
+   instance tested. It is the right signal for "what was just published."
+2. **Backlog (weekly `--full`):** drills every organisation's full tender
+   list for completeness. NIC may throttle this; organisations that come
+   back as a session/error page are skipped **without storing their count**,
+   so they are retried on the next full run — coverage self-heals rather
+   than freezing an org out.
+3. The CPPP aggregate feed (national CPSUs) is paged newest-first; paging
+   stops once a full page contains nothing new.
+4. Everything is upserted into SQLite keyed on (portal, tender id), so
    "new since last run" is exact. Keywords only set the relevance tier;
    they never affect what is stored. Cross-portal duplicates collapse at
    display time, preferring the copy with a deep link.
-4. Government (NIC) portals soft-throttle aggressive IPs. When a drill
-   comes back as a session/error page, the scraper **does not store that
-   organisation's count**, so it is retried on the next run — coverage
-   self-heals over a few cycles rather than freezing an org out.
 5. All timestamps are handled in **IST** (the portals publish closing times
    in IST), so "days left" and deadline windows are correct regardless of
    where the scraper runs.
