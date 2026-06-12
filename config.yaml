@@ -174,6 +174,13 @@ portals:
     state: National
     hincol: national
     enabled: true
+  - id: pmgsy
+    name: PMGSY rural roads (pmgsytenders.gov.in, nationwide)
+    type: gepnic
+    app_url: https://pmgsytenders.gov.in/nicgep/app
+    state: National (PMGSY)
+    hincol: national
+    enabled: true
 
   # ---- HINCOL plant states ----
   - id: mahatenders
