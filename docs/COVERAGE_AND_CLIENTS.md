@@ -38,7 +38,13 @@ rural roads.
 ## 3. Genuinely-missed sources (custom portals — not on NIC GePNIC)
 
 These agencies float bitumen-relevant work but on their own/custom platforms, so
-the GePNIC adapter cannot reach them. Ranked by HINCOL value:
+the GePNIC adapter cannot reach them. Ranked by HINCOL value.
+
+*Platform families that are NOT NIC GePNIC (each needs its own adapter):* Gujarat
+= **(n)Procure**; Andhra Pradesh + Telangana = **Vupadhi / A2Z Procure**; Karnataka
+= **KPPP** (captcha); Maharashtra MSRDC/MMRDA/MIDC = MahaOnline/Sify/PWIMS; Bihar
+= custom (eproc2.bihar.gov.in, 404 on the GePNIC path); Chhattisgarh = IBM CHEPS
+(login); NEC = eWizard. Everything else nationwide is GePNIC and already covered.
 
 | Agency | State | Portal | Platform | Why it matters | Effort to add |
 |---|---|---|---|---|---|
@@ -81,27 +87,53 @@ keyword). A target account list mapped to where their tenders appear:
 ## 5. Potential clients — CONTRACTOR leads (demand-side; the actual bitumen buyers)
 
 The agencies above *specify* bitumen; the EPC/HAM **contractors that win their
-projects are the ones that actually purchase it** — HINCOL's most direct sales
-targets. These do not float public bitumen tenders (they are buyers), so they are
-**business-development leads, not scraper sources.** Curated list of India's major
-road contractors (validate against HINCOL's existing customer book):
+projects actually purchase it** — HINCOL's most direct sales targets. They do not
+float public bitumen tenders (they are buyers), so they are **business-development
+leads, not scraper sources.** Note: HAM/BOT/TOT *developers* (IRB, Adani Road,
+Cube Highways, the InvITs) are concession owners who sub-contract or use in-house
+EPC arms — the bitumen buyer is whoever lays the asphalt. **Pure EPC players are
+the most direct, highest-volume customers.**
 
-**Tier 1 — large, national:**
-Larsen & Toubro (L&T Construction), Dilip Buildcon, GR Infraprojects, KNR
-Constructions, PNC Infratech, Ashoka Buildcon, IRB Infrastructure, Adani Road
-Transport, Megha Engineering (MEIL), Montecarlo, Cube Highways (O&M/asset owner),
-Welspun Enterprises.
+**Tier 1 — large / national** (company · HQ/regions · note):
+- **L&T Construction** · national — marquee expressways; roads one of many segments
+- **Dilip Buildcon** · MP/TN/Odisha/Gujarat/Rajasthan — historically India's largest road-EPC by volume; one of the single biggest direct bitumen consumers
+- **GR Infraprojects** · 23 states — roads ~74% of book; **owns bitumen/emulsion plants** (vertically integrated)
+- **PNC Infratech** · UP (Agra) + national — major expressway contractor
+- **KNR Constructions** · Telangana/Karnataka/TN/Kerala — efficient, debt-light, strong execution
+- **Ashoka Buildcon** · Maharashtra (Nashik) — EPC + own HAM/BOT
+- **IRB Infrastructure** · national — largest BOT/toll developer; buys via EPC arm
+- **Adani Road Transport** · Odisha/WB/Telangana/AP/TN/CG — aggressive NHAI HAM/BOT bidder
+- **Montecarlo** · Jharkhand/Bihar/Gujarat (Ahmedabad) — diversified private EPC
+- **HG Infra Engineering** · Rajasthan (Jaipur) — fast-growing highway EPC + HAM
+- **Megha Engineering (MEIL)** · AP/Telangana (Hyderabad) — HAM/EPC highways
+- **Gawar Construction** · Haryana (Hisar)/UP/Rajasthan — major NHAI EPC (Bundelkhand Expressway)
+- **APCO Infratech** · UP (Lucknow)/Bihar/Haryana — built India's first 14-lane (Delhi-Meerut)
+- **Ceigall India** · Punjab (Ludhiana)/Haryana/Rajasthan/UP — elevated roads, flyovers, runways
+- Also large: Afcons, Tata Projects, NCC, Welspun Enterprises, Cube Highways (O&M/resurfacing), GHV Infra
 
 **Tier 2 — mid / fast-growing / regional:**
-HG Infra Engineering, Gawar Construction, APCO Infratech, Ceigall India, J Kumar
-Infraprojects, Patel Infrastructure, RCC Developers, Rohan Builders, Bharat Road
-Network, Sadbhav Engineering, DRA Infracon, Vishvaraj Infrastructure.
+J Kumar Infraprojects (MH, flyover/metro-heavy), DRA Infracon (Gujarat/Assam — NE's
+first BOT-toll), KCC Buildcon (NCR/Rajasthan — Delhi-Mumbai Expressway), Oriental
+Structural Engineers (MH/UP — Yamuna Expressway), Rithwik Projects (Telangana/AP),
+RKC Infrabuilt (Gujarat), MBL Infrastructure, GPT Infraprojects (rail-bridge-heavy),
+Atlas Construction (greenfield expressways), BSCPL Infrastructure, Vishwa Samudra
+(Kerala/J&K HAM).
 
-**How to use:** when the dashboard surfaces a large road/expressway tender (esp.
-NHAI HAM/EPC or a state expressway), the awarded contractor is the buyer to
-approach for binder supply — especially for **PPP/concessionaire expressways**
-(e.g. Ganga Expressway, Samruddhi) where bitumen is procured at the contractor
-level, not as a separate agency tender.
+**Top sales priority (purest, highest-volume direct bitumen buyers):**
+Dilip Buildcon, GR Infra, PNC Infratech, KNR, HG Infra, Ceigall, Montecarlo, Gawar,
+APCO, Vishwa Samudra, KCC, DRA, RKC, Ashoka (EPC arm), and L&T where laying pavement.
+
+**Avoid / de-prioritize (financially distressed or defunct — do not waste BD effort):**
+Sadbhav Engineering (negative net worth, asset-sale mode), Roadway Solutions India
+(defaults + NHAI litigation), ITNL/IL&FS Transportation (defunct, under resolution),
+Gayatri Projects (post-insolvency, rebuilding), Chetak Enterprises (NHAI terminated
+a major contract). Patel Engineering = mostly hydropower, low bitumen relevance.
+
+**How to use:** when the dashboard surfaces a large road/expressway tender (esp. an
+NHAI HAM/EPC award or a state expressway like Samruddhi or Ganga Expressway), the
+**awarded contractor** is the binder-supply buyer to approach — especially for
+PPP/concessionaire expressways where bitumen is procured at the contractor level,
+not as a separate agency tender.
 
 ## 6. Bottom line
 
