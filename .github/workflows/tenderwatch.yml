@@ -1,0 +1,86 @@
+name: TenderWatch
+
+# Scrapes the portals on a schedule, persists the SQLite DB on a
+# force-pushed `data` branch (so "new since last run" survives across
+# runs without bloating git history), and publishes the dashboard to
+# GitHub Pages.
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"   # every 3 hours UTC (covers IST business hours well)
+  workflow_dispatch: {}      # allow manual runs from the Actions tab
+
+permissions:
+  contents: write   # push the data branch
+  pages: write      # deploy Pages
+  id-token: write   # Pages OIDC
+
+concurrency:
+  group: tenderwatch
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore tender database
+        run: |
+          mkdir -p data
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch --depth=1 origin data
+            git show FETCH_HEAD:tenders.db > data/tenders.db
+            echo "Restored DB ($(du -h data/tenders.db | cut -f1))"
+          else
+            echo "No data branch yet; this run will baseline."
+          fi
+
+      - name: Scrape, render dashboard, notify
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+        run: python run.py
+
+      - name: Persist tender database to data branch
+        if: always()
+        run: |
+          [ -f data/tenders.db ] || exit 0
+          sqlite3 data/tenders.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
+          cp data/tenders.db /tmp/tenders.db
+          git config user.name "tenderwatch-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan tmp-data
+          git rm -r --cached . >/dev/null 2>&1 || true
+          cp /tmp/tenders.db tenders.db
+          git add -f tenders.db
+          git commit -q -m "data: snapshot $(date -u +%FT%TZ)"
+          git push -f origin tmp-data:data
+          echo "Persisted DB snapshot to data branch."
+
+      - name: Prepare Pages artifact
+        run: touch dashboard/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard
+
+  deploy:
+    needs: scrape
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

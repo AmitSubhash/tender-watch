@@ -69,6 +69,38 @@ The Mac must be awake for runs to fire; launchd coalesces missed runs
 to the next wake. The portals update during IST business hours, so a
 2 hour interval loses nothing in practice.
 
+## Hosting (GitHub Actions + Pages)
+
+The deployed version runs entirely in the cloud, independent of any
+local machine, via `.github/workflows/tenderwatch.yml`:
+
+- **Scrape cadence:** every 3 hours (cron `0 */3 * * *`), plus a manual
+  "Run workflow" button in the Actions tab. Tenders are published during
+  IST business hours and bid deadlines are days to weeks out, so a 3
+  hour cadence catches everything with a wide margin. Tighten the cron
+  if you want, but hourly or faster only adds load on the gov servers
+  for no practical gain.
+- **Database persistence:** the SQLite DB is restored from and saved to
+  a force-pushed `data` branch each run (one commit, no history bloat),
+  so "new since last run" stays exact across cloud runs.
+- **Dashboard:** published to GitHub Pages after every run. The page
+  self-refreshes every 15 minutes in the browser.
+- **Phone alerts from the cloud:** the workflow sends the same ntfy push
+  when new matches appear, reading the topic from the `NTFY_TOPIC`
+  repository secret (never committed). Set it with
+  `gh secret set NTFY_TOPIC`.
+
+Because cloud runs are authoritative, the local launchd agent should be
+unloaded once hosting is live to avoid double-scraping and duplicate
+phone pushes:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.amit.tenderwatch.plist
+```
+
+Note: GitHub disables scheduled workflows after 60 days with no repo
+commits. A periodic commit (or the manual Run button) keeps it alive.
+
 ## Configuration
 
 Everything lives in `config.yaml`:
