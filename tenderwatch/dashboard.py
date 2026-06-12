@@ -29,6 +29,29 @@ C_AMBER = "#d97706"
 C_GREEN = "#059669"
 C_GRID = "#e7edf4"
 
+# Quick keyword-filter chips shown on the dashboard. Each is (label, regex
+# tested case-insensitively against the tender title). Tweak freely.
+KEYWORD_CHIPS = [
+    ("Runway", r"runway"),
+    ("Taxiway", r"taxiway"),
+    ("Asphalt", r"asphalt"),
+    ("Road", r"\broad"),
+    ("Pot hole", r"pot\s*hole"),
+    ("Repair", r"repair"),
+    ("Surfacing", r"surfac"),
+    ("Bitumen", r"bitumen|bituminous"),
+    ("PMB", r"\bp\.?m\.?b\b|modified bitumen|crmb"),
+    ("Emulsion", r"emulsion"),
+]
+
+
+def _keyword_chip_html() -> str:
+    """Render the keyword quick-filter chips."""
+    return "".join(
+        f'<button class="kwchip" data-rx="{html.escape(rx)}">{html.escape(lbl)}</button>'
+        for lbl, rx in KEYWORD_CHIPS
+    )
+
 
 def _days_left(closing: str | None, now: datetime) -> float | None:
     """Return days until closing (may be negative), or None if unparseable."""
@@ -276,6 +299,7 @@ def render_dashboard(settings: Settings):
         states_svg=charts["states"],
         donut_svg=charts["donut"],
         state_options=state_options,
+        keyword_chips=_keyword_chip_html(),
         rows=rows_html,
         health_rows=health_html,
     )
@@ -339,6 +363,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   .count{{font-size:12.5px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}}
   .reset{{padding:7px 11px;border:1px solid var(--border);border-radius:9px;cursor:pointer;
     background:#fff;font-size:12.5px;color:var(--muted)}}
+  .kwrow{{border-top:1px dashed var(--border);padding-top:9px}}
+  .kwlabel{{font-size:12px;color:var(--muted);font-weight:600;align-self:center}}
+  .grp-kw{{display:inline-flex;gap:6px;flex-wrap:wrap}}
+  .kwchip{{padding:5px 11px;border:1px solid var(--border);border-radius:999px;cursor:pointer;
+    background:#fff;font-size:12.5px;color:var(--ink)}}
+  .kwchip.active{{background:var(--product);color:#fff;border-color:var(--product)}}
   table{{width:100%;border-collapse:collapse;background:var(--panel);
     border:1px solid var(--border);border-radius:12px;overflow:hidden}}
   th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
@@ -407,6 +437,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <span id="count" class="count"></span>
       <button id="reset" class="reset" onclick="resetFilters()">Reset</button>
     </div>
+    <div class="controls kwrow">
+      <span class="kwlabel">Keywords:</span>
+      <span class="grp-kw" id="gKw">{keyword_chips}</span>
+    </div>
   </div>
   <table id="tenders">
     <thead><tr><th></th><th>Title</th><th>Organisation</th><th>State</th>
@@ -432,7 +466,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   const $=id=>document.getElementById(id);
   const search=$('search'),tbody=document.querySelector('#tenders tbody'),countEl=$('count');
   const total=tbody.rows.length;
-  let tier='all',close='any';
+  let tier='all',close='any',kwActive=[];
   function pickGroup(groupId,attr,val){{
     for(const b of $(groupId).children) b.classList.toggle('active', b.dataset[attr]===val);
   }}
@@ -450,6 +484,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(close==='open') ok = !(d<0);
         else ok = d>=0 && d<=parseFloat(close);
       }}
+      if(ok && kwActive.length){{           // keyword chips: match title against ANY active chip
+        const title=tr.cells[1].textContent;
+        ok = kwActive.some(rx=>rx.test(title));
+      }}
       tr.style.display=ok?'':'none';
       if(ok) shown++;
     }}
@@ -457,16 +495,21 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   }}
   function setTier(t){{tier=t;pickGroup('gTier','tier',t);apply();}}
   function setClose(c){{close=c;pickGroup('gClose','close',c);apply();}}
+  function rebuildKw(){{kwActive=[...$('gKw').querySelectorAll('.kwchip.active')]
+    .map(b=>new RegExp(b.dataset.rx,'i'));}}
   function sortRows(m){{const rows=Array.from(tbody.rows);
     rows.sort((a,b)=>m==='new'?(b.dataset.seen||'').localeCompare(a.dataset.seen||'')
       :(parseFloat(a.dataset.days)||1e9)-(parseFloat(b.dataset.days)||1e9));
     rows.forEach(r=>tbody.appendChild(r));
     pickGroup('gSort','sort',m);}}
   function resetFilters(){{search.value='';$('fState').value='';$('fPlant').checked=false;
-    setTier('all');setClose('any');}}
+    $('gKw').querySelectorAll('.kwchip.active').forEach(b=>b.classList.remove('active'));
+    kwActive=[];setTier('all');setClose('any');}}
   $('gTier').onclick=e=>{{if(e.target.dataset.tier)setTier(e.target.dataset.tier);}};
   $('gClose').onclick=e=>{{if(e.target.dataset.close)setClose(e.target.dataset.close);}};
   $('gSort').onclick=e=>{{if(e.target.dataset.sort)sortRows(e.target.dataset.sort);}};
+  $('gKw').onclick=e=>{{if(e.target.classList.contains('kwchip')){{
+    e.target.classList.toggle('active');rebuildKw();apply();}}}};
   $('fState').onchange=apply; $('fPlant').onchange=apply; search.addEventListener('input',apply);
   apply();
 </script>
