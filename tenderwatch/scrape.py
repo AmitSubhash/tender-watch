@@ -140,17 +140,19 @@ def _ingest_rows(
                 stats.new_matched_titles.append(row.title)
 
 
-def _fetch_recent_by_date(
+def _fetch_recent_tenders(
     client: httpx.Client, portal: PortalConfig, settings: Settings
 ) -> list:
-    """Fetch the captcha-free "tenders by date" listing (recent tenders).
+    """Fetch the captcha-free advanced-search listing (recent tenders).
 
     This is the throttle-resilient incremental route: one GET per portal,
     no per-organisation DirectLink drilling (which NIC rate-limits at
-    scale). Returns the most recently published tenders across all
-    organisations on the portal.
+    scale). ``FrontEndAdvancedSearchResult`` returns the ~20 most recently
+    published tenders across all organisations, newest first, and works on
+    every GePNIC instance tested (unlike ``FrontEndListTendersbyDate``,
+    which several portals have disabled).
     """
-    url = f"{portal.app_url}?page=FrontEndListTendersbyDate&service=page"
+    url = f"{portal.app_url}?page=FrontEndAdvancedSearchResult&service=page"
     return parse_gepnic_listing(fetch(client, url, settings))
 
 
@@ -247,19 +249,19 @@ def scrape_gepnic_portal(
     started = now_string()
     db = Database(settings.database_path)
     client = make_client(settings)
-    by_date_ok = False
+    recent_ok = False
     try:
         # Incremental every run: recent tenders, drill-free and captcha-free.
         try:
-            recent = _fetch_recent_by_date(client, portal, settings)
+            recent = _fetch_recent_tenders(client, portal, settings)
             _ingest_rows(db, portal.id, recent, matcher, stats)
-            by_date_ok = True
+            recent_ok = True
             logger.info(
-                "[%s] by-date: %d recent rows, %d new", portal.id, len(recent), stats.new
+                "[%s] recent: %d rows, %d new", portal.id, len(recent), stats.new
             )
         except Exception as exc:
-            stats.error = f"by-date fetch failed: {exc}"
-            logger.warning("[%s] by-date listing failed: %s", portal.id, exc)
+            stats.error = f"recent-listing fetch failed: {exc}"
+            logger.warning("[%s] recent listing failed: %s", portal.id, exc)
 
         # Deep backlog only on demand (weekly): per-org drilling at scale.
         if full:
@@ -267,7 +269,7 @@ def scrape_gepnic_portal(
 
         # "ok" if the cheap listing loaded (even with zero recent tenders) or we
         # ingested rows from the drill; "error" only if the portal gave nothing.
-        stats.status = "ok" if (by_date_ok or stats.seen > 0) else "error"
+        stats.status = "ok" if (recent_ok or stats.seen > 0) else "error"
     except Exception as exc:
         stats.status = "error"
         stats.error = str(exc)
