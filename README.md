@@ -134,13 +134,31 @@ PYTHONPATH=. .venv/bin/pytest -q     # 27 tests: parsing, db, tiers, deadline, s
 Parser and adapter tests run against captured real portal HTML, so a
 GePNIC markup change surfaces as a test failure.
 
-## Roadmap
+## Roadmap: the remaining custom portals
 
-- **camofox adapter** for the JavaScript portals (Karnataka, AP, Gujarat —
-  all HINCOL plant states — plus Telangana, Chhattisgarh, Bihar).
-- Tender value extraction for matched tenders (prioritise large contracts).
-- CSV / Excel export for the procurement team.
-- Daily morning digest email (draft-only).
+Six states are NOT on GePNIC and were investigated (2026-06-12). Each needs
+bespoke work; findings:
+
+| Portal | Platform | Blocker | Path |
+|---|---|---|---|
+| Andhra Pradesh* | Vize eProc (CSRF + JS dashboard) | tender list is AJAX-rendered, no static endpoint found | headless browser in CI |
+| Telangana | same as AP | same | headless browser in CI |
+| Karnataka* | KPPP SPA | data via JS, no API exposed in HTML | headless browser in CI |
+| Gujarat* | nProcure | unreachable from outside India (no route to host) | needs India egress |
+| Chhattisgarh | CHEPS (IBM) | login-gated | likely no public list |
+| Bihar | custom | host unresolved | locate correct host |
+
+(*HINCOL plant state.) The viable general solution is a **Playwright +
+headless Chromium step inside the GitHub Actions workflow** (camofox, the
+local stealth browser, is not available on cloud runners) with per-portal
+navigation/selectors. This is a separate, heavier, more fragile component
+than the GePNIC adapter and is deferred pending prioritisation. The 31
+GePNIC/CPPP portals already cover the large majority of road-tender volume,
+including 4 HINCOL plant states plus NHAI/MoRTH (etenders.gov.in) and BRO/
+MES (defproc).
+
+Also planned: PMGSY/OMMS (rural roads) and MSRDC (expressways) custom
+adapters; tender-value extraction; CSV/Excel export; daily digest email.
 
 ## Data and etiquette
 

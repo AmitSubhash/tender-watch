@@ -182,6 +182,8 @@ def _tender_row(
     return (
         f'    <tr data-seen="{html.escape(row["first_seen"] or "")}"'
         f' data-tier="{html.escape(tier)}"'
+        f' data-state="{html.escape(state)}"'
+        f' data-plant="{"1" if is_plant else "0"}"'
         f' data-days="{"" if days is None else f"{days:.2f}"}">'
         f"<td>{badges}</td>"
         f'<td>{title_html}<br><span class="muted">{ref} &middot; {tender_id}</span></td>'
@@ -235,6 +237,15 @@ def render_dashboard(settings: Settings):
     new_24h = len(db.new_matched_since(24))
     charts = _build_charts(tenders, now, meta, counts)
     rows_html = "\n".join(_tender_row(r, new_cutoff, now, meta) for r in tenders)
+    # State dropdown options (states present among the open matched tenders).
+    state_present: Counter = Counter()
+    for r in tenders:
+        pm = meta.get(r["portal"])
+        state_present[pm.state if pm else r["portal"]] += 1
+    state_options = "".join(
+        f'<option value="{html.escape(s)}">{html.escape(s)} ({c})</option>'
+        for s, c in sorted(state_present.items())
+    )
     health = db.portal_health()
     ok_portals = sum(1 for h in health if h["status"] == "ok")
     health_html = "\n".join(
@@ -264,6 +275,7 @@ def render_dashboard(settings: Settings):
         hist_svg=charts["hist"],
         states_svg=charts["states"],
         donut_svg=charts["donut"],
+        state_options=state_options,
         rows=rows_html,
         health_rows=health_html,
     )
@@ -309,12 +321,24 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   .panel{{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px}}
   .panel h3{{margin:0 0 10px;font-size:12.5px;color:var(--muted);text-transform:uppercase;
     letter-spacing:.05em;font-weight:650}}
-  .controls{{display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap;align-items:center}}
-  .controls input{{flex:1 1 300px;padding:9px 13px;border:1px solid var(--border);
-    border-radius:9px;font-size:14px;background:var(--panel)}}
-  .controls button{{padding:8px 13px;border:1px solid var(--border);cursor:pointer;
-    border-radius:9px;background:var(--panel);font-size:13px;color:var(--ink)}}
-  .controls button.active{{background:var(--accent);color:#fff;border-color:var(--accent)}}
+  .filterbar{{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+    padding:12px 14px;margin-bottom:14px}}
+  .controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
+  .controls+.controls{{margin-top:9px}}
+  .controls input[type=search]{{flex:1 1 280px;padding:9px 13px;border:1px solid var(--border);
+    border-radius:9px;font-size:14px;background:#fff}}
+  .controls select{{padding:8px 11px;border:1px solid var(--border);border-radius:9px;
+    font-size:13px;background:#fff;color:var(--ink);max-width:200px}}
+  .chk{{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--product);
+    padding:7px 10px;border:1px solid var(--border);border-radius:9px;cursor:pointer;font-weight:600}}
+  .grp{{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}}
+  .grp button{{padding:7px 11px;border:0;border-right:1px solid var(--border);cursor:pointer;
+    background:#fff;font-size:12.5px;color:var(--ink)}}
+  .grp button:last-child{{border-right:0}}
+  .grp button.active{{background:var(--accent);color:#fff}}
+  .count{{font-size:12.5px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}}
+  .reset{{padding:7px 11px;border:1px solid var(--border);border-radius:9px;cursor:pointer;
+    background:#fff;font-size:12.5px;color:var(--muted)}}
   table{{width:100%;border-collapse:collapse;background:var(--panel);
     border:1px solid var(--border);border-radius:12px;overflow:hidden}}
   th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
@@ -357,14 +381,32 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     <div class="panel"><h3>Open tenders by state &nbsp;<span style="color:#c2410c">&#9733; plant</span></h3>{states_svg}</div>
     <div class="panel"><h3>Product vs road</h3>{donut_svg}</div>
   </div>
-  <div class="controls">
-    <input id="search" type="search" placeholder="Filter by title, organisation, state, tender id...">
-    <button id="fAll" class="active" onclick="setFilter('all')">All</button>
-    <button id="fProduct" onclick="setFilter('product')">Product only</button>
-    <button id="fClosing" onclick="setFilter('closing')">Closing &le;7d</button>
-    <span style="width:6px"></span>
-    <button id="sNew" class="active" onclick="sortRows('new')">Newest</button>
-    <button id="sClose" onclick="sortRows('close')">Closing soon</button>
+  <div class="filterbar">
+    <div class="controls">
+      <input id="search" type="search" placeholder="Search title, organisation, tender id...">
+      <select id="fState" title="Filter by state"><option value="">All states</option>{state_options}</select>
+      <label class="chk"><input type="checkbox" id="fPlant"> &#9733; Plant states</label>
+    </div>
+    <div class="controls">
+      <span class="grp" id="gTier">
+        <button class="active" data-tier="all">All tiers</button>
+        <button data-tier="product">Product</button>
+        <button data-tier="road">Road</button>
+      </span>
+      <span class="grp" id="gClose">
+        <button class="active" data-close="any">Any deadline</button>
+        <button data-close="3">&le;3d</button>
+        <button data-close="7">&le;7d</button>
+        <button data-close="14">&le;14d</button>
+        <button data-close="open">Open only</button>
+      </span>
+      <span class="grp" id="gSort">
+        <button class="active" data-sort="new">Newest</button>
+        <button data-sort="close">Closing soon</button>
+      </span>
+      <span id="count" class="count"></span>
+      <button id="reset" class="reset" onclick="resetFilters()">Reset</button>
+    </div>
   </div>
   <table id="tenders">
     <thead><tr><th></th><th>Title</th><th>Organisation</th><th>State</th>
@@ -387,28 +429,46 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   search the tender id there); CPPP rows deep-link.</p>
 </main>
 <script>
-  const search=document.getElementById('search'),tbody=document.querySelector('#tenders tbody');
-  let filter='all';
+  const $=id=>document.getElementById(id);
+  const search=$('search'),tbody=document.querySelector('#tenders tbody'),countEl=$('count');
+  const total=tbody.rows.length;
+  let tier='all',close='any';
+  function pickGroup(groupId,attr,val){{
+    for(const b of $(groupId).children) b.classList.toggle('active', b.dataset[attr]===val);
+  }}
   function apply(){{
     const q=search.value.toLowerCase();
+    const state=$('fState').value, plant=$('fPlant').checked;
+    let shown=0;
     for(const tr of tbody.rows){{
-      const t=tr.textContent.toLowerCase().includes(q);
-      let f=true;
-      if(filter==='product')f=tr.dataset.tier==='product';
-      else if(filter==='closing'){{const d=parseFloat(tr.dataset.days);f=d>=0&&d<=7;}}
-      tr.style.display=(t&&f)?'':'none';
+      const d=parseFloat(tr.dataset.days);
+      let ok = !q || tr.textContent.toLowerCase().includes(q);
+      if(ok && state) ok = tr.dataset.state===state;
+      if(ok && plant) ok = tr.dataset.plant==='1';
+      if(ok && tier!=='all') ok = tr.dataset.tier===tier;
+      if(ok && close!=='any'){{
+        if(close==='open') ok = !(d<0);
+        else ok = d>=0 && d<=parseFloat(close);
+      }}
+      tr.style.display=ok?'':'none';
+      if(ok) shown++;
     }}
+    countEl.textContent=`${{shown}} of ${{total}}`;
   }}
-  function setFilter(f){{filter=f;
-    for(const id of ['fAll','fProduct','fClosing'])document.getElementById(id).classList.remove('active');
-    document.getElementById({{all:'fAll',product:'fProduct',closing:'fClosing'}}[f]).classList.add('active');apply();}}
+  function setTier(t){{tier=t;pickGroup('gTier','tier',t);apply();}}
+  function setClose(c){{close=c;pickGroup('gClose','close',c);apply();}}
   function sortRows(m){{const rows=Array.from(tbody.rows);
     rows.sort((a,b)=>m==='new'?(b.dataset.seen||'').localeCompare(a.dataset.seen||'')
       :(parseFloat(a.dataset.days)||1e9)-(parseFloat(b.dataset.days)||1e9));
     rows.forEach(r=>tbody.appendChild(r));
-    document.getElementById('sNew').classList.toggle('active',m==='new');
-    document.getElementById('sClose').classList.toggle('active',m==='close');}}
-  search.addEventListener('input',apply);
+    pickGroup('gSort','sort',m);}}
+  function resetFilters(){{search.value='';$('fState').value='';$('fPlant').checked=false;
+    setTier('all');setClose('any');}}
+  $('gTier').onclick=e=>{{if(e.target.dataset.tier)setTier(e.target.dataset.tier);}};
+  $('gClose').onclick=e=>{{if(e.target.dataset.close)setClose(e.target.dataset.close);}};
+  $('gSort').onclick=e=>{{if(e.target.dataset.sort)sortRows(e.target.dataset.sort);}};
+  $('fState').onchange=apply; $('fPlant').onchange=apply; search.addEventListener('input',apply);
+  apply();
 </script>
 </body>
 </html>
