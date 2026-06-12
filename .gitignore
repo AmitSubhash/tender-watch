@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+data/.tenderwatch.lock
+.playwright-mcp/
+*.png
+logs/
+dashboard/index.html
+samples/
+.ruff_cache/
+.pytest_cache/

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.amit.tenderwatch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/amit/Projects/tender-watch/.venv/bin/python</string>
+    <string>/Users/amit/Projects/tender-watch/run.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/amit/Projects/tender-watch</string>
+  <key>StartInterval</key>
+  <integer>7200</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/amit/Projects/tender-watch/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/amit/Projects/tender-watch/logs/launchd.err</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>
