@@ -1,39 +1,57 @@
-"""Keyword matcher tests."""
+"""Tiered keyword matcher tests."""
 
 from __future__ import annotations
 
 from tenderwatch.filters import KeywordMatcher
 
-KEYWORDS = ["road", "highway", "bridge", "cc road", "rob", "सड़क"]
+PRODUCT = ["bitumen", "emulsion", "crmb", "pmb", "asphalt", "pothole", "vg30"]
+ROAD = ["road", "highway", "bridge", "cc road", "rob", "सड़क"]
 
 
-def test_basic_match() -> None:
-    matcher = KeywordMatcher(KEYWORDS)
-    assert matcher.matches("Construction of CC Road at Ward 7")
-    assert matcher.matches("Four laning of national HIGHWAY section")
-    assert not matcher.matches("Supply of office furniture")
+def matcher(**kwargs) -> KeywordMatcher:
+    return KeywordMatcher(PRODUCT, ROAD, kwargs.get("exclude", []), kwargs.get("org", False))
+
+
+def test_product_tier_wins() -> None:
+    m = matcher()
+    assert m.tier("Supply of CRMB for NH-44 widening") == "product"
+    assert m.tier("Procurement of bitumen emulsion SS2") == "product"
+    assert m.tier("Construction of CC road in ward 7") == "road"
+    assert m.tier("Supply of office furniture") is None
+
+
+def test_product_beats_road_when_both_present() -> None:
+    m = matcher()
+    # contains both "road" (road) and "bitumen" (product) -> product wins
+    assert m.tier("Bitumen resurfacing of village road") == "product"
 
 
 def test_word_boundaries() -> None:
-    matcher = KeywordMatcher(KEYWORDS)
-    assert matcher.matches("Construction of ROB at km 12")
-    assert not matcher.matches("Payment to Robert Associates")
-    assert not matcher.matches("Wardrobe supply for hostel")
+    m = matcher()
+    assert m.tier("Construction of ROB at km 12") == "road"
+    assert m.tier("Payment to Robert Associates") is None
+    assert m.tier("Wardrobe supply for hostel") is None
 
 
 def test_hindi_substring() -> None:
-    matcher = KeywordMatcher(KEYWORDS)
-    assert matcher.matches("ग्राम पंचायत में सड़क निर्माण कार्य")
+    m = matcher()
+    assert m.tier("ग्राम पंचायत में सड़क निर्माण") == "road"
 
 
 def test_exclude_veto() -> None:
-    matcher = KeywordMatcher(KEYWORDS, exclude=["streetlight"])
-    assert not matcher.matches("Streetlight installation along road")
-    assert matcher.matches("Widening of road near bridge")
+    m = matcher(exclude=["streetlight"])
+    assert m.tier("Streetlight installation along road") is None
+    assert m.tier("Widening of road near bridge") == "road"
+
+
+def test_matches_helper() -> None:
+    m = matcher()
+    assert m.matches("CC road work") is True
+    assert m.matches("Supply of computers") is False
 
 
 def test_organisation_matching_flag() -> None:
-    title_only = KeywordMatcher(["road"], match_organisation=False)
-    with_org = KeywordMatcher(["road"], match_organisation=True)
-    assert not title_only.matches("Beat 126", "Road Construction Department")
-    assert with_org.matches("Beat 126", "Road Construction Department")
+    title_only = KeywordMatcher(PRODUCT, ["road"], [], match_organisation=False)
+    with_org = KeywordMatcher(PRODUCT, ["road"], [], match_organisation=True)
+    assert title_only.tier("Beat 126", "Road Construction Dept") is None
+    assert with_org.tier("Beat 126", "Road Construction Dept") == "road"

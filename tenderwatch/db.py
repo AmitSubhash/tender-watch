@@ -5,23 +5,32 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .parsing import TenderRow
 
+# All timestamps are stored and compared in IST. The tender portals publish
+# closing times in IST, so pinning the clock here keeps "days left" and the
+# deadline alerts correct regardless of where the scraper runs (a local Mac
+# or a UTC GitHub Actions runner).
+IST = ZoneInfo("Asia/Kolkata")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tenders (
-    portal       TEXT NOT NULL,
-    tender_id    TEXT NOT NULL,
-    title        TEXT,
-    ref_no       TEXT,
-    organisation TEXT,
-    published    TEXT,
-    closing      TEXT,
-    opening      TEXT,
-    url          TEXT,
-    first_seen   TEXT NOT NULL,
-    last_seen    TEXT NOT NULL,
-    matched      INTEGER NOT NULL DEFAULT 0,
+    portal           TEXT NOT NULL,
+    tender_id        TEXT NOT NULL,
+    title            TEXT,
+    ref_no           TEXT,
+    organisation     TEXT,
+    published        TEXT,
+    closing          TEXT,
+    opening          TEXT,
+    url              TEXT,
+    first_seen       TEXT NOT NULL,
+    last_seen        TEXT NOT NULL,
+    matched          INTEGER NOT NULL DEFAULT 0,
+    tier             TEXT,
+    deadline_alerted TEXT,
     PRIMARY KEY (portal, tender_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tenders_closing ON tenders (closing);
@@ -47,12 +56,34 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 """
 
+# Columns added after v0.1; applied to pre-existing databases at open time.
+MIGRATIONS = {
+    "tier": "ALTER TABLE tenders ADD COLUMN tier TEXT",
+    "deadline_alerted": "ALTER TABLE tenders ADD COLUMN deadline_alerted TEXT",
+}
+
 NOW_FORMAT = "%Y-%m-%d %H:%M:%S"
+MINUTE_FORMAT = "%Y-%m-%d %H:%M"
 
 
 def now_string() -> str:
-    """Return the current local time as a sortable string."""
-    return datetime.now().strftime(NOW_FORMAT)
+    """Return the current IST time as a sortable second-precision string."""
+    return datetime.now(IST).strftime(NOW_FORMAT)
+
+
+def now_minute() -> str:
+    """Return the current IST time to the minute, matching ``closing`` format.
+
+    Used for ``closing`` comparisons: closing times are stored without
+    seconds, so comparing against a second-precision now would treat a
+    tender closing in the current minute as already closed.
+    """
+    return datetime.now(IST).strftime(MINUTE_FORMAT)
+
+
+def _future_minute(days: int) -> str:
+    """Return the IST timestamp ``days`` days from now, to the minute."""
+    return (datetime.now(IST) + timedelta(days=days)).strftime(MINUTE_FORMAT)
 
 
 class Database:
@@ -65,7 +96,18 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=60000")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the initial schema to old databases."""
+        existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(tenders)")}
+        for column, statement in MIGRATIONS.items():
+            if column not in existing:
+                self.conn.execute(statement)
+        # Created here (not in SCHEMA) so it only runs once the tier column
+        # is guaranteed to exist, including on migrated pre-tier databases.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_tenders_tier ON tenders (tier)")
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -76,7 +118,7 @@ class Database:
         row = self.conn.execute("SELECT COUNT(*) AS n FROM tenders").fetchone()
         return row["n"] == 0
 
-    def upsert_tender(self, portal: str, row: TenderRow, matched: bool) -> bool:
+    def upsert_tender(self, portal: str, row: TenderRow, tier: str | None) -> bool:
         """Insert or refresh one tender.
 
         Parameters
@@ -85,8 +127,8 @@ class Database:
             Portal id the tender was scraped from.
         row : TenderRow
             Parsed tender fields.
-        matched : bool
-            Whether the tender matches the configured keywords.
+        tier : str or None
+            Relevance tier ("product"/"road") or None if not relevant.
 
         Returns
         -------
@@ -94,22 +136,26 @@ class Database:
             True when the tender was not previously in the database.
         """
         now = now_string()
+        matched = int(tier is not None)
         cursor = self.conn.execute(
             "SELECT 1 FROM tenders WHERE portal = ? AND tender_id = ?",
             (portal, row.tender_id),
         )
         exists = cursor.fetchone() is not None
         if exists:
+            # Refresh volatile fields and the tier (keywords may have changed),
+            # but never clear an existing deadline alert.
             self.conn.execute(
                 """UPDATE tenders SET last_seen = ?, closing = COALESCE(?, closing),
-                   url = COALESCE(?, url) WHERE portal = ? AND tender_id = ?""",
-                (now, row.closing, row.url, portal, row.tender_id),
+                   url = COALESCE(?, url), matched = ?, tier = ?
+                   WHERE portal = ? AND tender_id = ?""",
+                (now, row.closing, row.url, matched, tier, portal, row.tender_id),
             )
         else:
             self.conn.execute(
                 """INSERT INTO tenders (portal, tender_id, title, ref_no, organisation,
-                   published, closing, opening, url, first_seen, last_seen, matched)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   published, closing, opening, url, first_seen, last_seen, matched, tier)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     portal,
                     row.tender_id,
@@ -122,7 +168,8 @@ class Database:
                     row.url,
                     now,
                     now,
-                    int(matched),
+                    matched,
+                    tier,
                 ),
             )
         self.conn.commit()
@@ -134,6 +181,13 @@ class Database:
             "SELECT org, count FROM org_counts WHERE portal = ?", (portal,)
         ).fetchall()
         return {r["org"]: r["count"] for r in rows}
+
+    def get_org_state(self, portal: str) -> dict[str, tuple[int, str]]:
+        """Return ``{org: (count, last_updated)}`` for re-drill decisions."""
+        rows = self.conn.execute(
+            "SELECT org, count, updated FROM org_counts WHERE portal = ?", (portal,)
+        ).fetchall()
+        return {r["org"]: (r["count"], r["updated"]) for r in rows}
 
     def set_org_count(self, portal: str, org: str, count: int) -> None:
         """Store one organisation's current tender count."""
@@ -163,33 +217,75 @@ class Database:
         )
         self.conn.commit()
 
-    def open_matched_tenders(self, limit: int = 1500) -> list[sqlite3.Row]:
+    def open_matched_tenders(self, limit: int = 2000) -> list[sqlite3.Row]:
         """Return keyword-matched tenders that have not closed yet.
 
         Cross-portal duplicates (same tender id) are collapsed, preferring
-        the copy that carries a deep-link URL.
+        the copy that carries a deep-link URL. Product-tier tenders sort
+        ahead of road-tier, then newest first.
         """
-        now = now_string()
-        # SQLite picks bare-column values from the row where the single
-        # MIN/MAX aggregate occurs, so each tender_id resolves to its
-        # deep-linked copy when one exists.
         return self.conn.execute(
             """SELECT *, MAX(url IS NOT NULL) AS has_url FROM tenders
                WHERE matched = 1 AND (closing IS NULL OR closing >= ?)
                GROUP BY tender_id
-               ORDER BY first_seen DESC LIMIT ?""",
-            (now, limit),
+               ORDER BY (tier = 'product') DESC, first_seen DESC LIMIT ?""",
+            (now_minute(), limit),
         ).fetchall()
 
     def new_matched_since(self, hours: int) -> list[sqlite3.Row]:
         """Return matched tenders first seen within the last N hours."""
-        cutoff = (datetime.now() - timedelta(hours=hours)).strftime(NOW_FORMAT)
+        cutoff = (datetime.now(IST) - timedelta(hours=hours)).strftime(NOW_FORMAT)
         return self.conn.execute(
             """SELECT *, MAX(url IS NOT NULL) AS has_url FROM tenders
                WHERE matched = 1 AND first_seen >= ?
-               GROUP BY tender_id ORDER BY first_seen DESC""",
+               GROUP BY tender_id ORDER BY (tier = 'product') DESC, first_seen DESC""",
             (cutoff,),
         ).fetchall()
+
+    def tenders_closing_soon(
+        self, road_within_days: int, product_within_days: int
+    ) -> list[sqlite3.Row]:
+        """Return open, not-yet-alerted matched tenders nearing their deadline.
+
+        Product-tier tenders use the (longer) product lead time; all others
+        use the road lead time. Cross-portal duplicates are collapsed.
+
+        Parameters
+        ----------
+        road_within_days : int
+            Lead window for road-tier tenders.
+        product_within_days : int
+            Lead window for product-tier tenders.
+
+        Returns
+        -------
+        list of sqlite3.Row
+            Tenders to alert on, soonest deadline first.
+        """
+        return self.conn.execute(
+            """SELECT *, MAX(url IS NOT NULL) AS has_url FROM tenders
+               WHERE matched = 1 AND deadline_alerted IS NULL
+                 AND closing IS NOT NULL AND closing >= ?
+                 AND (
+                   (tier = 'product' AND closing <= ?)
+                   OR (tier IS NOT 'product' AND closing <= ?)
+                 )
+               GROUP BY tender_id
+               ORDER BY closing ASC""",
+            (
+                now_minute(),
+                _future_minute(product_within_days),
+                _future_minute(road_within_days),
+            ),
+        ).fetchall()
+
+    def mark_deadline_alerted(self, tender_id: str) -> None:
+        """Flag every copy of a tender id as having had its deadline alerted."""
+        self.conn.execute(
+            "UPDATE tenders SET deadline_alerted = ? WHERE tender_id = ?",
+            (now_string(), tender_id),
+        )
+        self.conn.commit()
 
     def portal_health(self) -> list[sqlite3.Row]:
         """Return the most recent run per portal."""
@@ -203,18 +299,27 @@ class Database:
     def summary_counts(self) -> dict[str, int]:
         """Return headline totals for the dashboard."""
         total = self.conn.execute("SELECT COUNT(*) AS n FROM tenders").fetchone()["n"]
-        matched = self.conn.execute(
-            "SELECT COUNT(*) AS n FROM tenders WHERE matched = 1"
-        ).fetchone()["n"]
+        now = now_minute()
         open_matched = self.conn.execute(
             """SELECT COUNT(DISTINCT tender_id) AS n FROM tenders
                WHERE matched = 1 AND (closing IS NULL OR closing >= ?)""",
-            (now_string(),),
+            (now,),
         ).fetchone()["n"]
-        return {"total": total, "matched": matched, "open_matched": open_matched}
+        open_product = self.conn.execute(
+            """SELECT COUNT(DISTINCT tender_id) AS n FROM tenders
+               WHERE tier = 'product' AND (closing IS NULL OR closing >= ?)""",
+            (now,),
+        ).fetchone()["n"]
+        return {"total": total, "open_matched": open_matched, "open_product": open_product}
+
+    def count_null_tier_matched(self) -> int:
+        """Return how many matched tenders still lack a tier (need backfill)."""
+        return self.conn.execute(
+            "SELECT COUNT(*) AS n FROM tenders WHERE matched = 1 AND tier IS NULL"
+        ).fetchone()["n"]
 
     def rematch_all(self, matcher) -> int:
-        """Recompute the matched flag for every stored tender.
+        """Recompute matched flag and tier for every stored tender.
 
         Parameters
         ----------
@@ -231,11 +336,11 @@ class Database:
         ).fetchall()
         matched_count = 0
         for r in rows:
-            matched = matcher.matches(r["title"] or "", r["organisation"] or "")
-            matched_count += int(matched)
+            tier = matcher.tier(r["title"] or "", r["organisation"] or "")
+            matched_count += int(tier is not None)
             self.conn.execute(
-                "UPDATE tenders SET matched = ? WHERE portal = ? AND tender_id = ?",
-                (int(matched), r["portal"], r["tender_id"]),
+                "UPDATE tenders SET matched = ?, tier = ? WHERE portal = ? AND tender_id = ?",
+                (int(tier is not None), tier, r["portal"], r["tender_id"]),
             )
         self.conn.commit()
         return matched_count

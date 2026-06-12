@@ -1,150 +1,149 @@
-# TenderWatch
+# HINCOL TenderWatch
 
-Automated monitoring of Indian government e-procurement portals for road
-and infrastructure tenders. Scrapes captcha-free public listing routes,
-stores everything in SQLite, renders a local dashboard, and pushes a
-phone notification when new keyword-matched tenders appear.
+Automated monitoring of Indian government e-procurement portals for road,
+bituminous, and infrastructure tenders, tuned for **Hindustan Colas
+(HINCOL)**: bitumen emulsions, modified bitumen (CRMB/PMB/NRMB),
+microsurfacing, cold mix, and allied products.
 
-## What it covers
+It scrapes captcha-free public listing routes across **31 portals (nearly
+every state and union territory)**, stores everything in SQLite, flags
+tenders by relevance tier, renders a live dashboard, and pushes phone
+alerts both when new matching tenders appear **and when an open tender's
+bid deadline is approaching** so the team can respond in time.
 
-| Portal | Route used | Status |
-|---|---|---|
-| etenders.gov.in (central: MoRTH, NHAI, NHIDCL, ministries) | organisation directory drill | working |
-| eprocure.gov.in CPPP aggregate (NTPC, ONGC, AAI, ARMY, MES, CPSUs) | paged feed with deep links | working |
-| mahatenders.gov.in (Maharashtra, incl. MSRDC orgs) | organisation directory drill | working |
-| mptenders.gov.in (Madhya Pradesh) | organisation directory drill | working |
-| etender.up.nic.in (Uttar Pradesh, incl. UPPWD) | organisation directory drill | working |
-| etenders.kerala.gov.in (Kerala) | organisation directory drill | working |
-| tendersodisha.gov.in (Odisha) | organisation directory drill | working |
-| tntenders.gov.in (Tamil Nadu) | organisation directory drill | working |
-| defproc.gov.in (BRO, MES defence works) | organisation directory drill | working |
-| Telangana, AP, Karnataka, Chhattisgarh, Gujarat (nprocure), GeM | JavaScript portals | not yet (needs camofox adapter, see roadmap) |
+**Live dashboard:** https://amitsubhash.github.io/tender-watch/
 
-Notes on indirect coverage: NHAI and MoRTH publish on etenders.gov.in;
-BRO and MES publish on defproc.gov.in; many CPSUs (AAI, NTPC, railways
-PSUs) flow through the CPPP aggregate feed. PMGSY rural road tenders
-appear on the respective state portals. Commercial aggregators
-(BidAssist, TenderDetail, Tender247, TendersOnTime, Tata nexarc) are
-deliberately not scraped: they are paid services repackaging the same
-source data pulled here.
+## What makes it HINCOL-specific
+
+1. **Two relevance tiers.**
+   - **Product** (Tier 1): the tender names a HINCOL product or bituminous
+     binder (bitumen, emulsion, CRMB, PMB, microsurfacing, cold mix, VG10/30/40,
+     DBM, mastic asphalt, ...). These are the highest-value leads because
+     HINCOL's materials are explicitly specified.
+   - **Road** (Tier 2): general road / pavement / runway work (highway,
+     widening, resurfacing, pothole/road repair, PMGSY, CC road, ...), where
+     a bituminous binder is likely needed even if not named. Includes
+     transliterated Hindi/Marathi terms (rasta, sadak, khadikaran).
+2. **Deadline alerts ("respond at the right time").** When a flagged, still-open
+   tender's bid-submission deadline comes within the lead window (10 days for
+   product tenders, 5 for road), it triggers a one-time phone push and is
+   surfaced in the dashboard's "closing within 7 days" view.
+3. **Plant-state awareness.** Portals are tagged by state and HINCOL presence;
+   tenders in a HINCOL plant state are starred (lower logistics cost = more
+   competitive bids). Plants: Maharashtra, UP, Haryana, Gujarat, Karnataka,
+   Tamil Nadu, Andhra Pradesh, West Bengal, Assam.
+
+## Coverage
+
+**31 portals scraped** (GePNIC organisation-directory route + the CPPP
+aggregate feed):
+
+- **National:** etenders.gov.in (MoRTH, NHAI, NHIDCL), CPPP aggregate
+  (NTPC, AAI, ARMY, MES, CPSUs), defproc (BRO/MES).
+- **States/UTs:** Maharashtra, Uttar Pradesh, Haryana, Tamil Nadu, West
+  Bengal, Assam, Madhya Pradesh, Odisha, Kerala, Jharkhand, Rajasthan,
+  Uttarakhand, Punjab, Himachal Pradesh, Delhi, Jammu & Kashmir, Ladakh,
+  Goa, Tripura, Arunachal Pradesh, Manipur, Meghalaya, Mizoram, Nagaland,
+  Sikkim, Chandigarh, Andaman & Nicobar, Dadra & Nagar Haveli.
+
+**Not yet scraped** (custom, JavaScript-rendered portals; planned via a
+camofox-based adapter): Karnataka, Andhra Pradesh, Gujarat, Telangana,
+Chhattisgarh, Bihar. Three of these (Karnataka, AP, Gujarat) are HINCOL
+plant states, so they are the top roadmap priority.
+
+Commercial aggregators (BidAssist, TenderDetail, Tender247, etc.) are
+deliberately not scraped: they repackage the same source data pulled here.
 
 ## How it works
 
 1. Each GePNIC portal exposes a captcha-free organisation directory
    (`FrontEndTendersByOrganisation`) listing every organisation with its
-   live tender count. The scraper drills into an organisation only when
-   its count changed since the last run, so refreshes are cheap (the
-   full tender list of an organisation arrives on a single page).
-2. The CPPP aggregate feed is paged newest-first; paging stops as soon
-   as a full page contains nothing new.
-3. Everything seen is upserted into SQLite keyed on (portal, tender id),
-   so "new since last run" is exact. Keywords only control highlighting
-   and notifications, never what is stored. Cross-portal duplicates are
-   collapsed at display time, preferring the copy with a deep link.
-4. After each cycle the dashboard regenerates and one summary push goes
-   to the phone via `push-to-phone` when new matches appeared.
+   live tender count and a session-bound link to that organisation's full
+   tender list (which arrives on a single page). The scraper drills an
+   organisation when its count changed, OR it has not been re-checked in
+   `force_redrill_hours` (default 24) — the time-based re-scan catches
+   "churn" (one tender closes as another opens, leaving the count
+   unchanged) that a pure count-diff would miss.
+2. The CPPP aggregate feed is paged newest-first; paging stops once a full
+   page contains nothing new.
+3. Everything is upserted into SQLite keyed on (portal, tender id), so
+   "new since last run" is exact. Keywords only set the relevance tier;
+   they never affect what is stored. Cross-portal duplicates collapse at
+   display time, preferring the copy with a deep link.
+4. Government (NIC) portals soft-throttle aggressive IPs. When a drill
+   comes back as a session/error page, the scraper **does not store that
+   organisation's count**, so it is retried on the next run — coverage
+   self-heals over a few cycles rather than freezing an org out.
+5. All timestamps are handled in **IST** (the portals publish closing times
+   in IST), so "days left" and deadline windows are correct regardless of
+   where the scraper runs.
+
+## Hosting (GitHub Actions + Pages)
+
+Runs entirely in the cloud via `.github/workflows/tenderwatch.yml`:
+
+- **Scrape cadence:** every 3 hours (cron `0 */3 * * *`), plus a **weekly
+  full re-scan** Sunday 03:00 IST that re-drills every organisation as a
+  safety net, plus a manual "Run workflow" button.
+- **Database persistence:** the SQLite DB is restored from and saved to a
+  force-pushed `data` branch each run (one commit, no history bloat). The
+  restore verifies the DB is non-empty and passes `PRAGMA integrity_check`
+  before use, and the persist step refuses to overwrite the branch with a
+  DB under 50 rows — so a transient failure can never wipe the history.
+- **Dashboard:** published to GitHub Pages after every run; self-refreshes
+  every 15 minutes in the browser.
+- **Phone alerts from the cloud:** new-tender and deadline pushes use the
+  `NTFY_TOPIC` repository secret (`gh secret set NTFY_TOPIC`).
+
+GitHub disables scheduled workflows after 60 days with no repo commits;
+the auto-commits to the `data` branch and the manual Run button keep it
+alive.
 
 ## Usage
 
 ```bash
-.venv/bin/python run.py                    # full cycle: scrape, render, notify
-.venv/bin/python run.py --baseline         # first pull or full re-pull, no push
-.venv/bin/python run.py --portals up       # restrict to one portal
-.venv/bin/python run.py --dashboard-only   # re-render HTML only
-.venv/bin/python run.py --rematch          # re-apply keywords to stored tenders
-open dashboard/index.html                  # view the dashboard
+.venv/bin/python run.py                 # full cycle: scrape, render, alert
+.venv/bin/python run.py --full          # re-drill every org regardless of counts
+.venv/bin/python run.py --portals rajasthan,goa
+.venv/bin/python run.py --dashboard-only
+.venv/bin/python run.py --rematch       # re-apply keyword tiers to stored tenders
+open dashboard/index.html
 ```
-
-## Scheduling (every 2 hours)
-
-```bash
-cp launchd/com.amit.tenderwatch.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.amit.tenderwatch.plist
-# pause / resume
-launchctl unload ~/Library/LaunchAgents/com.amit.tenderwatch.plist
-```
-
-Change the cadence by editing `StartInterval` (seconds) in the plist.
-The Mac must be awake for runs to fire; launchd coalesces missed runs
-to the next wake. The portals update during IST business hours, so a
-2 hour interval loses nothing in practice.
-
-## Hosting (GitHub Actions + Pages)
-
-The deployed version runs entirely in the cloud, independent of any
-local machine, via `.github/workflows/tenderwatch.yml`:
-
-- **Scrape cadence:** every 3 hours (cron `0 */3 * * *`), plus a manual
-  "Run workflow" button in the Actions tab. Tenders are published during
-  IST business hours and bid deadlines are days to weeks out, so a 3
-  hour cadence catches everything with a wide margin. Tighten the cron
-  if you want, but hourly or faster only adds load on the gov servers
-  for no practical gain.
-- **Database persistence:** the SQLite DB is restored from and saved to
-  a force-pushed `data` branch each run (one commit, no history bloat),
-  so "new since last run" stays exact across cloud runs.
-- **Dashboard:** published to GitHub Pages after every run. The page
-  self-refreshes every 15 minutes in the browser.
-- **Phone alerts from the cloud:** the workflow sends the same ntfy push
-  when new matches appear, reading the topic from the `NTFY_TOPIC`
-  repository secret (never committed). Set it with
-  `gh secret set NTFY_TOPIC`.
-
-Because cloud runs are authoritative, the local launchd agent should be
-unloaded once hosting is live to avoid double-scraping and duplicate
-phone pushes:
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.amit.tenderwatch.plist
-```
-
-Note: GitHub disables scheduled workflows after 60 days with no repo
-commits. A periodic commit (or the manual Run button) keeps it alive.
 
 ## Configuration
 
 Everything lives in `config.yaml`:
 
-- `filters.include_keywords` / `exclude_keywords`: matching is word
-  boundary based for ASCII (so `rob` matches "ROB" but not "Robert")
-  and substring based for Devanagari. Transliterated Marathi/Hindi
-  road terms (rasta, sadak, khadikaran, ...) are included because many
-  rural tenders are titled in Romanized Marathi or Hindi.
-- `filters.match_organisation`: set true to also match department names
-  (catches vaguely titled tenders from road departments, at the cost of
-  more noise).
-- `scrape.request_delay_seconds`: politeness delay between requests.
-- `notify.enabled`: phone push on/off.
-- Portal entries can be enabled/disabled individually.
-
-After changing keywords run `run.py --rematch` to re-flag stored tenders.
+- `filters.product_keywords` / `road_keywords` / `exclude_keywords`: matching
+  is word-boundary based for ASCII (so `rob` matches "ROB" not "Robert") and
+  substring based for Devanagari. After editing, run `run.py --rematch`.
+- `deadline.product_within_days` / `road_within_days`: deadline-alert lead times.
+- `scrape.force_redrill_hours`, `request_delay_seconds`, `max_workers`.
+- Portals can be enabled/disabled individually and carry `state` + `hincol`
+  (plant/depot/national) tags.
 
 ## Development
 
 ```bash
 .venv/bin/ruff format . && .venv/bin/ruff check .
-PYTHONPATH=. .venv/bin/pytest -q
+PYTHONPATH=. .venv/bin/pytest -q     # 27 tests: parsing, db, tiers, deadline, scrape, dashboard, notify
 ```
 
-Parser tests run against captured real HTML fragments from the portals,
-so a GePNIC markup change shows up as a test failure, and the live page
-samples used during development are in `samples/` (gitignored).
+Parser and adapter tests run against captured real portal HTML, so a
+GePNIC markup change surfaces as a test failure.
 
 ## Roadmap
 
-- Telangana / AP / Karnataka / Chhattisgarh / Gujarat adapters via the
-  local camofox browser server (these portals require JavaScript).
-- GeM bid search adapter (mostly goods/services, lower priority).
-- Tender value extraction (requires detail-page fetches; GePNIC detail
-  links are session bound and rate limited, so only fetch for matched
-  tenders).
-- Daily morning digest email draft via the Outlook MCP (draft only).
+- **camofox adapter** for the JavaScript portals (Karnataka, AP, Gujarat —
+  all HINCOL plant states — plus Telangana, Chhattisgarh, Bihar).
+- Tender value extraction for matched tenders (prioritise large contracts).
+- CSV / Excel export for the procurement team.
+- Daily morning digest email (draft-only).
 
 ## Data and etiquette
 
-Only public tender listings published for open dissemination are read.
-Requests are serial per portal with a delay, retries are bounded, and
-the org-count diff strategy keeps steady-state load to a few dozen
-requests per portal per cycle. TLS verification is disabled because
-several gov.in hosts serve incomplete certificate chains; nothing
-sensitive is transmitted.
+Only public tender listings are read. Requests are serial per portal with
+a delay, retries are bounded, and the count-diff strategy keeps steady-state
+load to a few dozen requests per portal per cycle. TLS verification is
+disabled because several gov.in hosts serve incomplete certificate chains;
+nothing sensitive is transmitted.

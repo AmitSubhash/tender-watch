@@ -178,7 +178,9 @@ def parse_gepnic_listing(html: str) -> list[TenderRow]:
         tender_id = (
             id_matches[-1]
             if id_matches
-            else fallback_tender_id(title, ref_parts[0] if ref_parts else None, closing)
+            else fallback_tender_id(
+                title, ref_parts[0] if ref_parts else None, closing, organisation
+            )
         )
         rows.append(
             TenderRow(
@@ -226,6 +228,10 @@ def parse_cppp_listing(
         anchor = title_cell.find("a", href=True)
         title = anchor.get_text(" ", strip=True) if anchor else ""
         url = urljoin(base_url, str(anchor["href"])) if anchor else None
+        # Only keep absolute http(s) links; drop javascript:/data:/protocol-
+        # relative hrefs so they cannot become a clickable payload downstream.
+        if url is not None and not url.startswith(("http://", "https://")):
+            url = None
         cell_text = title_cell.get_text(" ", strip=True)
         id_matches = TENDER_ID_RE.findall(cell_text)
         tender_id = id_matches[-1] if id_matches else fallback_tender_id(title, closing)

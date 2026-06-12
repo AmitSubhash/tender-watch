@@ -23,8 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from tenderwatch.config import load_settings  # noqa: E402
 from tenderwatch.dashboard import render_dashboard  # noqa: E402
 from tenderwatch.db import Database  # noqa: E402
-from tenderwatch.filters import KeywordMatcher  # noqa: E402
-from tenderwatch.runner import run_cycle  # noqa: E402
+from tenderwatch.runner import build_matcher, run_cycle  # noqa: E402
 
 
 def setup_logging() -> None:
@@ -58,11 +57,7 @@ def main() -> int:
     settings = load_settings()
 
     if args.rematch:
-        matcher = KeywordMatcher(
-            settings.include_keywords,
-            settings.exclude_keywords,
-            settings.match_organisation,
-        )
+        matcher = build_matcher(settings)
         db = Database(settings.database_path)
         matched = db.rematch_all(matcher)
         db.close()

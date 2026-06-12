@@ -8,6 +8,7 @@ name: TenderWatch
 on:
   schedule:
     - cron: "0 */3 * * *"   # every 3 hours UTC (covers IST business hours well)
+    - cron: "30 21 * * 0"   # Sunday 03:00 IST: weekly full re-scan of every org
   workflow_dispatch: {}      # allow manual runs from the Actions tab
 
 permissions:
@@ -38,8 +39,20 @@ jobs:
           mkdir -p data
           if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
             git fetch --depth=1 origin data
-            git show FETCH_HEAD:tenders.db > data/tenders.db
-            echo "Restored DB ($(du -h data/tenders.db | cut -f1))"
+            # Restore to a temp file and verify it is non-empty and not corrupt
+            # BEFORE replacing the working copy. A failed/empty restore must NOT
+            # silently reset the DB (the persist step would then overwrite the
+            # real history with an empty one).
+            TMPDB="$(mktemp)"
+            if git show FETCH_HEAD:tenders.db > "$TMPDB" 2>/dev/null && [ -s "$TMPDB" ] \
+               && sqlite3 "$TMPDB" "PRAGMA integrity_check;" | grep -q "^ok$"; then
+              mv "$TMPDB" data/tenders.db
+              echo "Restored DB ($(du -h data/tenders.db | cut -f1))"
+            else
+              echo "::warning::DB restore failed/empty/corrupt; aborting to protect data"
+              rm -f "$TMPDB"
+              exit 1
+            fi
           else
             echo "No data branch yet; this run will baseline."
           fi
@@ -48,13 +61,26 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
-        run: python run.py
+        # The Sunday 21:30 UTC schedule does a full re-scan of every org.
+        run: |
+          if [ "${{ github.event.schedule }}" = "30 21 * * 0" ]; then
+            python run.py --full
+          else
+            python run.py
+          fi
 
       - name: Persist tender database to data branch
         if: always()
         run: |
           [ -f data/tenders.db ] || exit 0
           sqlite3 data/tenders.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
+          # Guard against pushing a junk DB over good history: require a sane row
+          # count. (Set low enough that a legitimate fresh baseline still passes.)
+          ROWS="$(sqlite3 data/tenders.db 'SELECT COUNT(*) FROM tenders;' 2>/dev/null || echo 0)"
+          if [ "$ROWS" -lt 50 ]; then
+            echo "::warning::Only $ROWS rows; not overwriting data branch this run"
+            exit 0
+          fi
           cp data/tenders.db /tmp/tenders.db
           git config user.name "tenderwatch-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -62,9 +88,9 @@ jobs:
           git rm -r --cached . >/dev/null 2>&1 || true
           cp /tmp/tenders.db tenders.db
           git add -f tenders.db
-          git commit -q -m "data: snapshot $(date -u +%FT%TZ)"
+          git commit -q -m "data: snapshot $(date -u +%FT%TZ), $ROWS rows"
           git push -f origin tmp-data:data
-          echo "Persisted DB snapshot to data branch."
+          echo "Persisted DB snapshot ($ROWS rows) to data branch."
 
       - name: Prepare Pages artifact
         run: touch dashboard/.nojekyll

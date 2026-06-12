@@ -1,36 +1,54 @@
-"""Keyword matching for tender relevance flagging."""
+"""Keyword matching and relevance tiering for tenders.
+
+Two tiers reflect how directly a tender maps to HINCOL's business:
+
+* ``product`` - the tender names a HINCOL product or bituminous binder
+  (bitumen emulsion, CRMB/PMB, microsurfacing, VG grades, ...). HINCOL's
+  materials are explicitly specified, so these are the highest-value leads.
+* ``road`` - general road/pavement work where a bituminous binder is
+  likely required even if not named.
+
+Product is checked first and wins when both match.
+"""
 
 from __future__ import annotations
 
 import re
 
+PRODUCT_TIER = "product"
+ROAD_TIER = "road"
+
 
 class KeywordMatcher:
-    """Word-boundary keyword matcher with include/exclude lists.
+    """Tiered word-boundary keyword matcher with an exclude veto.
 
-    ASCII keywords are matched on word boundaries (so "rob" matches
-    "ROB" but not "Robert"); non-ASCII keywords (Hindi) are matched as
-    plain substrings.
+    ASCII keywords are matched on word boundaries (so ``rob`` matches
+    "ROB" but not "Robert"); non-ASCII keywords (Devanagari) are matched
+    as plain substrings.
 
     Parameters
     ----------
-    include : list of str
-        Keywords or phrases that flag a tender as relevant.
-    exclude : list of str
-        Keywords that veto a match even when an include keyword hits.
+    product_keywords : list of str
+        Tier 1 keywords (HINCOL products / binders).
+    road_keywords : list of str
+        Tier 2 keywords (general road work).
+    exclude_keywords : list of str
+        Keywords that veto a match in either tier.
     match_organisation : bool
-        When True, the organisation chain is searched in addition to
-        the title.
+        When True, the organisation chain is searched in addition to the
+        title.
     """
 
     def __init__(
         self,
-        include: list[str],
-        exclude: list[str] | None = None,
+        product_keywords: list[str],
+        road_keywords: list[str],
+        exclude_keywords: list[str] | None = None,
         match_organisation: bool = False,
     ) -> None:
-        self.include_re = self._compile(include)
-        self.exclude_re = self._compile(exclude or [])
+        self.product_re = self._compile(product_keywords)
+        self.road_re = self._compile(road_keywords)
+        self.exclude_re = self._compile(exclude_keywords or [])
         self.match_organisation = match_organisation
 
     @staticmethod
@@ -51,8 +69,8 @@ class KeywordMatcher:
             return None
         return re.compile("|".join(parts), re.IGNORECASE)
 
-    def matches(self, title: str, organisation: str = "") -> bool:
-        """Return True when the tender should be flagged as relevant.
+    def tier(self, title: str, organisation: str = "") -> str | None:
+        """Return the relevance tier for a tender, or None if irrelevant.
 
         Parameters
         ----------
@@ -63,14 +81,27 @@ class KeywordMatcher:
 
         Returns
         -------
-        bool
-            True when an include keyword hits and no exclude keyword does.
+        str or None
+            ``"product"``, ``"road"``, or None.
+
+        Example
+        -------
+        >>> matcher.tier("Supply of CRMB for NH widening")
+        'product'
+        >>> matcher.tier("Construction of CC road in ward 7")
+        'road'
         """
         haystack = title
         if self.match_organisation and organisation:
             haystack = f"{title} || {organisation}"
-        if self.include_re is None or not self.include_re.search(haystack):
-            return False
         if self.exclude_re is not None and self.exclude_re.search(haystack):
-            return False
-        return True
+            return None
+        if self.product_re is not None and self.product_re.search(haystack):
+            return PRODUCT_TIER
+        if self.road_re is not None and self.road_re.search(haystack):
+            return ROAD_TIER
+        return None
+
+    def matches(self, title: str, organisation: str = "") -> bool:
+        """Return True when the tender is relevant in either tier."""
+        return self.tier(title, organisation) is not None

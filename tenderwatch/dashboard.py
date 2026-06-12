@@ -5,10 +5,9 @@ from __future__ import annotations
 import html
 import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from .config import Settings
-from .db import NOW_FORMAT, Database
+from .config import PortalConfig, Settings
+from .db import IST, NOW_FORMAT, Database
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -16,48 +15,50 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="900">
-<title>TenderWatch</title>
+<title>{brand}</title>
 <style>
   :root {{
-    --bg: #f6f7f9; --card: #ffffff; --ink: #1a202c; --muted: #64748b;
-    --accent: #1d4ed8; --new: #047857; --warn: #b45309; --danger: #b91c1c;
-    --border: #e2e8f0;
+    --bg: #f4f6f8; --card: #ffffff; --ink: #14233a; --muted: #5f7088;
+    --accent: #0b5fa5; --new: #047857; --warn: #b45309; --danger: #b91c1c;
+    --product: #7c2d12; --product-bg: #fde68a; --border: #dde5ee; --ink-inv: #f8fafc;
   }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--ink); }}
-  header {{ background: #0f172a; color: #f8fafc; padding: 14px 24px;
+  header {{ background: #0b2440; color: var(--ink-inv); padding: 14px 24px;
             display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }}
-  header h1 {{ margin: 0; font-size: 18px; }}
-  header .sub {{ color: #94a3b8; font-size: 12.5px; }}
-  main {{ max-width: 1280px; margin: 0 auto; padding: 18px 24px 60px; }}
-  .cards {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }}
+  header h1 {{ margin: 0; font-size: 19px; letter-spacing: 0.01em; }}
+  header .sub {{ color: #9fb3cc; font-size: 12.5px; }}
+  main {{ max-width: 1320px; margin: 0 auto; padding: 18px 24px 60px; }}
+  .cards {{ display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }}
   .card {{ background: var(--card); border: 1px solid var(--border);
-           border-radius: 10px; padding: 12px 18px; min-width: 150px; }}
+           border-radius: 10px; padding: 12px 18px; min-width: 140px; }}
+  .card.hero {{ border-color: var(--accent); box-shadow: 0 1px 0 var(--accent) inset; }}
   .card .num {{ font-size: 26px; font-weight: 700; }}
+  .card .num.product {{ color: var(--product); }}
+  .card .num.urgent {{ color: var(--danger); }}
   .card .label {{ color: var(--muted); font-size: 12px; }}
-  .controls {{ display: flex; gap: 10px; margin: 10px 0 14px; flex-wrap: wrap; }}
-  .controls input {{ flex: 1 1 320px; padding: 8px 12px; border: 1px solid var(--border);
+  .controls {{ display: flex; gap: 8px; margin: 10px 0 14px; flex-wrap: wrap; align-items: center; }}
+  .controls input {{ flex: 1 1 300px; padding: 8px 12px; border: 1px solid var(--border);
                      border-radius: 8px; font-size: 14px; }}
-  .controls button {{ padding: 8px 14px; border: 1px solid var(--border); cursor: pointer;
+  .controls button {{ padding: 8px 13px; border: 1px solid var(--border); cursor: pointer;
                       border-radius: 8px; background: var(--card); font-size: 13px; }}
-  .controls button.active {{ background: var(--accent); color: #fff;
-                             border-color: var(--accent); }}
+  .controls button.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
   table {{ width: 100%; border-collapse: collapse; background: var(--card);
            border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
-  th {{ text-align: left; font-size: 11.5px; text-transform: uppercase;
-        letter-spacing: 0.04em; color: var(--muted); padding: 10px 12px;
-        border-bottom: 2px solid var(--border); background: #fbfcfe;
-        position: sticky; top: 0; }}
-  td {{ padding: 9px 12px; border-bottom: 1px solid var(--border);
-        vertical-align: top; }}
-  tr:hover td {{ background: #f1f5fb; }}
-  .badge {{ display: inline-block; padding: 1px 8px; border-radius: 999px;
-            font-size: 11px; font-weight: 600; }}
+  th {{ text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--muted); padding: 10px 12px; border-bottom: 2px solid var(--border);
+        background: #fbfcfe; position: sticky; top: 0; }}
+  td {{ padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  tr:hover td {{ background: #eef4fb; }}
+  .badge {{ display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px;
+            font-weight: 700; margin-right: 4px; }}
   .badge.new {{ background: #d1fae5; color: var(--new); }}
-  .portal {{ display: inline-block; background: #eef2ff; color: #3730a3;
-             padding: 1px 8px; border-radius: 999px; font-size: 11px; }}
-  .days {{ font-weight: 600; white-space: nowrap; }}
+  .badge.product {{ background: var(--product-bg); color: var(--product); }}
+  .badge.road {{ background: #e2e8f0; color: #475569; }}
+  .state {{ font-weight: 600; }}
+  .plant {{ color: var(--product); }}
+  .days {{ font-weight: 700; white-space: nowrap; }}
   .days.red {{ color: var(--danger); }}
   .days.amber {{ color: var(--warn); }}
   .days.green {{ color: var(--new); }}
@@ -72,30 +73,35 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>TenderWatch</h1>
-  <span class="sub">road and infrastructure tenders, refreshed {generated}</span>
-  <span class="sub">{portal_count} portals tracked</span>
+  <h1>{brand}</h1>
+  <span class="sub">{subtitle}</span>
+  <span class="sub">refreshed {generated} IST &middot; {portal_count} portals</span>
 </header>
 <main>
   <div class="cards">
+    <div class="card hero"><div class="num urgent">{closing_7d}</div>
+      <div class="label">closing within 7 days</div></div>
+    <div class="card"><div class="num product">{open_product}</div>
+      <div class="label">open product tenders</div></div>
     <div class="card"><div class="num">{open_matched}</div>
       <div class="label">open matching tenders</div></div>
     <div class="card"><div class="num">{new_24h}</div>
-      <div class="label">new matches in 24h</div></div>
-    <div class="card"><div class="num">{new_badge}</div>
-      <div class="label">new matches in {badge_hours}h</div></div>
+      <div class="label">new in 24h</div></div>
     <div class="card"><div class="num">{total}</div>
-      <div class="label">tenders tracked total</div></div>
+      <div class="label">tenders tracked</div></div>
   </div>
   <div class="controls">
-    <input id="search" type="search"
-      placeholder="Filter by title, organisation, portal, tender id...">
-    <button id="sortNew" class="active" onclick="sortRows('new')">Newest first</button>
-    <button id="sortClose" onclick="sortRows('close')">Closing soon</button>
+    <input id="search" type="search" placeholder="Filter by title, organisation, state, tender id...">
+    <button id="fAll" class="active" onclick="setFilter('all')">All</button>
+    <button id="fProduct" onclick="setFilter('product')">Product only</button>
+    <button id="fClosing" onclick="setFilter('closing')">Closing &le;7d</button>
+    <span style="width:8px"></span>
+    <button id="sNew" class="active" onclick="sortRows('new')">Newest</button>
+    <button id="sClose" onclick="sortRows('close')">Closing soon</button>
   </div>
   <table id="tenders">
     <thead><tr>
-      <th></th><th>Title</th><th>Organisation</th><th>Portal</th>
+      <th></th><th>Title</th><th>Organisation</th><th>State</th>
       <th>Published</th><th>Closing</th><th>Left</th>
     </tr></thead>
     <tbody>
@@ -104,106 +110,153 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   </table>
   <h2>Portal health (last run)</h2>
   <table class="health">
-    <thead><tr><th>Portal</th><th>Status</th><th>Finished</th>
+    <thead><tr><th>Portal</th><th>State</th><th>Status</th><th>Finished</th>
       <th>Rows seen</th><th>New</th><th>Error</th></tr></thead>
     <tbody>
 {health_rows}
     </tbody>
   </table>
-  <p class="muted">Data from public government e-procurement listings.
-  GePNIC portal rows link to the portal home (detail pages are session
-  bound); search the tender id there. CPPP rows deep-link directly.</p>
+  <p class="muted">Public government e-procurement listings. Product tenders name a
+  HINCOL product or bituminous binder; road tenders are general pavement work.
+  ★ marks a HINCOL plant state. GePNIC rows open the portal home (detail pages
+  are session bound; search the tender id there); CPPP rows deep-link.</p>
 </main>
 <script>
   const search = document.getElementById('search');
   const tbody = document.querySelector('#tenders tbody');
-  search.addEventListener('input', () => {{
+  let filter = 'all';
+  function apply() {{
     const q = search.value.toLowerCase();
     for (const tr of tbody.rows) {{
-      tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      const textOk = tr.textContent.toLowerCase().includes(q);
+      let fOk = true;
+      if (filter === 'product') fOk = tr.dataset.tier === 'product';
+      else if (filter === 'closing') fOk = parseFloat(tr.dataset.days) <= 7 && parseFloat(tr.dataset.days) >= 0;
+      tr.style.display = (textOk && fOk) ? '' : 'none';
     }}
-  }});
+  }}
+  function setFilter(f) {{
+    filter = f;
+    for (const id of ['fAll','fProduct','fClosing'])
+      document.getElementById(id).classList.remove('active');
+    document.getElementById({{all:'fAll',product:'fProduct',closing:'fClosing'}}[f]).classList.add('active');
+    apply();
+  }}
   function sortRows(mode) {{
     const rows = Array.from(tbody.rows);
     rows.sort((a, b) => {{
-      const ka = a.dataset[mode === 'new' ? 'seen' : 'closing'] || '';
-      const kb = b.dataset[mode === 'new' ? 'seen' : 'closing'] || '';
-      return mode === 'new' ? kb.localeCompare(ka) : ka.localeCompare(kb);
+      if (mode === 'new') return (b.dataset.seen||'').localeCompare(a.dataset.seen||'');
+      return (parseFloat(a.dataset.days) || 1e9) - (parseFloat(b.dataset.days) || 1e9);
     }});
     rows.forEach(r => tbody.appendChild(r));
-    document.getElementById('sortNew').classList.toggle('active', mode === 'new');
-    document.getElementById('sortClose').classList.toggle('active', mode === 'close');
+    document.getElementById('sNew').classList.toggle('active', mode === 'new');
+    document.getElementById('sClose').classList.toggle('active', mode === 'close');
   }}
+  search.addEventListener('input', apply);
 </script>
 </body>
 </html>
 """
 
 
-def _days_left_cell(closing: str | None, now: datetime) -> str:
+def _days_left(closing: str | None, now: datetime) -> float | None:
+    """Return days until closing (may be negative), or None if unparseable."""
     if not closing:
-        return '<td class="days muted">?</td>'
+        return None
     try:
-        closing_dt = datetime.strptime(closing, "%Y-%m-%d %H:%M")
+        closing_dt = datetime.strptime(closing, "%Y-%m-%d %H:%M").replace(tzinfo=IST)
     except ValueError:
+        return None
+    return (closing_dt - now).total_seconds() / 86400
+
+
+def _days_cell(days: float | None) -> str:
+    if days is None:
         return '<td class="days muted">?</td>'
-    days = (closing_dt - now).total_seconds() / 86400
     if days < 0:
         return '<td class="days muted">closed</td>'
     css = "red" if days < 3 else ("amber" if days < 7 else "green")
     return f'<td class="days {css}">{days:.0f}d</td>'
 
 
-def _tender_row(row: sqlite3.Row, new_cutoff: str, now: datetime) -> str:
+def _tender_row(
+    row: sqlite3.Row, new_cutoff: str, now: datetime, meta: dict[str, PortalConfig]
+) -> str:
     title = html.escape(row["title"] or "(untitled)")
-    if row["url"]:
-        title_html = f'<a href="{html.escape(row["url"])}" target="_blank">{title}</a>'
-    else:
-        title_html = title
+    url = (
+        row["url"]
+        if row["url"] and str(row["url"]).startswith(("http://", "https://"))
+        else None
+    )
+    title_html = (
+        f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{title}</a>'
+        if url
+        else title
+    )
     ref = html.escape(row["ref_no"] or "")
     tender_id = html.escape(row["tender_id"])
     org = html.escape(row["organisation"] or "")
+    portal_meta = meta.get(row["portal"])
+    state = portal_meta.state if portal_meta else ""
+    is_plant = bool(portal_meta and portal_meta.hincol == "plant")
+    state_html = f'<span class="state">{html.escape(state)}</span>'
+    if is_plant:
+        state_html += ' <span class="plant" title="HINCOL plant state">&#9733;</span>'
     is_new = (row["first_seen"] or "") >= new_cutoff
-    badge = '<span class="badge new">NEW</span>' if is_new else ""
+    tier = row["tier"] or "road"
+    badges = ""
+    if is_new:
+        badges += '<span class="badge new">NEW</span>'
+    badges += (
+        '<span class="badge product">PRODUCT</span>'
+        if tier == "product"
+        else '<span class="badge road">road</span>'
+    )
+    days = _days_left(row["closing"], now)
     return (
         f'    <tr data-seen="{html.escape(row["first_seen"] or "")}"'
-        f' data-closing="{html.escape(row["closing"] or "9999")}">'
-        f"<td>{badge}</td>"
+        f' data-tier="{html.escape(tier)}"'
+        f' data-days="{"" if days is None else f"{days:.2f}"}">'
+        f"<td>{badges}</td>"
         f'<td>{title_html}<br><span class="muted">{ref} &middot; {tender_id}</span></td>'
         f"<td>{org}</td>"
-        f'<td><span class="portal">{html.escape(row["portal"])}</span></td>'
+        f"<td>{state_html}</td>"
         f"<td>{html.escape(row['published'] or '')}</td>"
         f"<td>{html.escape(row['closing'] or '')}</td>"
-        f"{_days_left_cell(row['closing'], now)}"
+        f"{_days_cell(days)}"
         f"</tr>"
     )
 
 
-def render_dashboard(settings: Settings) -> Path:
+def render_dashboard(settings: Settings):
     """Generate the static dashboard HTML file.
 
     Parameters
     ----------
     settings : Settings
-        Provides database path, output path, and display options.
+        Provides database path, output path, branding, and display options.
 
     Returns
     -------
-    Path
+    pathlib.Path
         The written dashboard file path.
     """
     db = Database(settings.database_path)
-    now = datetime.now()
+    now = datetime.now(IST)
     new_cutoff = (now - timedelta(hours=settings.new_badge_hours)).strftime(NOW_FORMAT)
+    meta = settings.portal_meta()
     tenders = db.open_matched_tenders(limit=settings.dashboard_max_rows)
-    rows_html = "\n".join(_tender_row(r, new_cutoff, now) for r in tenders)
+    rows_html = "\n".join(_tender_row(r, new_cutoff, now, meta) for r in tenders)
+    closing_7d = sum(
+        1 for r in tenders if (d := _days_left(r["closing"], now)) is not None and 0 <= d <= 7
+    )
     counts = db.summary_counts()
     new_24h = len(db.new_matched_since(24))
-    new_badge = len(db.new_matched_since(settings.new_badge_hours))
     health = db.portal_health()
     health_html = "\n".join(
         (
             f"    <tr><td>{html.escape(h['portal'])}</td>"
+            f"<td>{html.escape(meta[h['portal']].state if h['portal'] in meta else '')}</td>"
             f'<td class="{"ok" if h["status"] == "ok" else "error"}">'
             f"{html.escape(h['status'] or '')}</td>"
             f"<td>{html.escape(h['finished'] or '')}</td>"
@@ -213,12 +266,14 @@ def render_dashboard(settings: Settings) -> Path:
         for h in health
     )
     page = PAGE_TEMPLATE.format(
+        brand=html.escape(settings.dashboard_brand),
+        subtitle=html.escape(settings.dashboard_subtitle),
         generated=now.strftime("%d %b %Y, %H:%M"),
         portal_count=len(health),
+        closing_7d=closing_7d,
+        open_product=counts["open_product"],
         open_matched=counts["open_matched"],
         new_24h=new_24h,
-        new_badge=new_badge,
-        badge_hours=settings.new_badge_hours,
         total=counts["total"],
         rows=rows_html,
         health_rows=health_html,

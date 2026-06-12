@@ -1,23 +1,78 @@
-# TenderWatch configuration.
-# Edit keywords/portals freely; the scraper stores everything it sees,
-# keywords only control what is highlighted on the dashboard and pushed
-# to your phone. Run `.venv/bin/python run.py --rematch` after changing
-# keywords to re-flag tenders already in the database.
+# HINCOL TenderWatch configuration.
+#
+# Tuned for Hindustan Colas (HINCOL): bitumen emulsions, modified bitumen
+# (CRMB/PMB/NRMB), microsurfacing, cold mix and allied bituminous products
+# for road and airfield pavements. The scraper stores every tender it sees;
+# the keyword tiers below control how tenders are flagged, prioritised on
+# the dashboard, and which ones trigger phone alerts.
+#
+# After editing keywords run `.venv/bin/python run.py --rematch` to re-flag
+# tenders already in the database.
 
 database: data/tenders.db
 
 scrape:
-  request_delay_seconds: 0.4
+  request_delay_seconds: 0.7   # polite pacing; NIC soft-throttles aggressive IPs
   timeout_seconds: 45
   retries: 2
-  max_workers: 6          # portals scraped in parallel, requests within a portal are serial
+  max_workers: 5          # portals scraped in parallel, requests within a portal are serial
   cppp_max_pages: 40      # CPPP aggregate feed pages per run (9 tenders per page)
   cppp_min_pages: 3       # always fetch at least this many pages before early-stop
   max_org_pages: 30       # safety cap if an org directory paginates
+  force_redrill_hours: 24 # re-scan every org at least this often, even if its
+                          # count is unchanged, to catch same-count churn
 
 filters:
   match_organisation: false   # also match keywords against the organisation chain
-  include_keywords:
+
+  # Tier 1 (PRODUCT): the tender names a HINCOL product or bituminous binder.
+  # These are the highest-value leads because HINCOL's materials are directly
+  # specified. They get earlier and louder alerts.
+  product_keywords:
+    - bitumen
+    - bituminous
+    - bitumen emulsion
+    - emulsion
+    - cationic
+    - anionic
+    - modified bitumen
+    - crmb
+    - pmb
+    - nrmb
+    - crumb rubber
+    - rubberised bitumen
+    - polymer modified
+    - microsurfacing
+    - micro surfacing
+    - micro-surfacing
+    - cold mix
+    - slurry seal
+    - surface dressing
+    - tack coat
+    - prime coat
+    - pothole
+    - pot hole
+    - pot-hole
+    - pothole repair
+    - patch work
+    - patchwork
+    - mastic asphalt
+    - asphalt
+    - asphaltic concrete
+    - bituminous concrete
+    - dense bituminous macadam
+    - dbm
+    - bituminous macadam
+    - vg10
+    - vg30
+    - vg40
+    - vg-10
+    - vg-30
+    - vg-40
+
+  # Tier 2 (ROAD): general road/pavement work. HINCOL binders are likely
+  # required even when not named, so these are leads worth tracking.
+  road_keywords:
     - road
     - roads
     - highway
@@ -25,9 +80,6 @@ filters:
     - bridge
     - flyover
     - culvert
-    - bituminous
-    - bitumen
-    - asphalt
     - pavement
     - carriageway
     - widening
@@ -37,9 +89,16 @@ filters:
     - runway
     - taxiway
     - apron
+    - airfield
     - viaduct
     - embankment
     - resurfacing
+    - surfacing
+    - road repair
+    - repair of road
+    - pavement repair
+    - road maintenance
+    - maintenance of road
     - strengthening of road
     - periodic renewal
     - upgradation of road
@@ -50,6 +109,9 @@ filters:
     - wbm
     - rob
     - rub
+    - black topping
+    - blacktopping
+    - metalling
     # transliterated Hindi/Marathi road terms (common in rural tenders)
     - rasta
     - rsta
@@ -57,102 +119,310 @@ filters:
     - khadikaran
     - murumikaran
     - dambarikaran
-    - "डांबरीकरण"
     - "सड़क"
     - "मार्ग"
     - "पुल"
-    - "डामरीकरण"
-    - "चौड़ीकरण"
+    - "डांबरीकरण"
+
   exclude_keywords: []        # e.g. [streetlight, pipeline] to suppress false positives
 
+deadline:
+  # "Get tenders at the right time": push an alert when a flagged tender is
+  # still open but its bid-submission deadline is approaching, so HINCOL's
+  # team can respond before the window closes. Product-tier tenders get a
+  # longer lead time. Each tender is alerted at most once.
+  road_within_days: 5
+  product_within_days: 10
+
 dashboard:
+  brand: HINCOL TenderWatch
+  subtitle: Bituminous and road tenders across HINCOL plant and depot states
   output: dashboard/index.html
-  max_rows: 1500
+  max_rows: 2000
   new_badge_hours: 48
 
 notify:
   enabled: true
-  command: push-to-phone     # uses your existing ntfy channel
+  command: push-to-phone     # local CLI; cloud uses NTFY_TOPIC env var
   max_titles: 3              # how many tender titles to include in the push body
 
+# HINCOL has 10 bitumen/emulsion plants (Maharashtra, UP, Haryana, Gujarat,
+# Karnataka, Tamil Nadu, Andhra Pradesh, West Bengal, Assam) and 27 depots
+# nationwide. Portals are tagged with their state and HINCOL presence so the
+# dashboard can flag tenders near a plant (lower logistics cost = more
+# competitive bids).
 portals:
-  # ---- GePNIC portals (verified working, captcha-free org-directory route) ----
+  # ---- National ----
   - id: etenders_central
     name: Central eTenders (MoRTH, NHAI, NHIDCL, ministries)
     type: gepnic
     app_url: https://etenders.gov.in/eprocure/app
+    state: National
+    hincol: national
     enabled: true
-  - id: mahatenders
-    name: Maharashtra (mahatenders.gov.in)
-    type: gepnic
-    app_url: https://mahatenders.gov.in/nicgep/app
-    enabled: true
-  - id: mptenders
-    name: Madhya Pradesh (mptenders.gov.in)
-    type: gepnic
-    app_url: https://mptenders.gov.in/nicgep/app
-    enabled: true
-  - id: up
-    name: Uttar Pradesh (etender.up.nic.in, incl. UPPWD)
-    type: gepnic
-    app_url: https://etender.up.nic.in/nicgep/app
-    enabled: true
-  - id: kerala
-    name: Kerala (etenders.kerala.gov.in)
-    type: gepnic
-    app_url: https://etenders.kerala.gov.in/nicgep/app
-    enabled: true
-  - id: odisha
-    name: Odisha (tendersodisha.gov.in)
-    type: gepnic
-    app_url: https://tendersodisha.gov.in/nicgep/app
-    enabled: true
-  - id: tamilnadu
-    name: Tamil Nadu (tntenders.gov.in)
-    type: gepnic
-    app_url: https://tntenders.gov.in/nicgep/app
+  - id: cppp_agg
+    name: CPPP aggregate (central CPSUs and defence)
+    type: cppp
+    list_url: https://eprocure.gov.in/cppp/latestactivetendersnew/cpppdata
+    state: National
+    hincol: national
     enabled: true
   - id: defproc
     name: Defence Procurement (BRO, MES via defproc.gov.in)
     type: gepnic
     app_url: https://defproc.gov.in/nicgep/app
+    state: National
+    hincol: national
     enabled: true
 
-  # ---- CPPP aggregate feed (central CPSUs: NTPC, ONGC, AAI, ARMY, MES, ...) ----
-  - id: cppp_agg
-    name: CPPP aggregate (central CPSUs and defence)
-    type: cppp
-    list_url: https://eprocure.gov.in/cppp/latestactivetendersnew/cpppdata
+  # ---- HINCOL plant states ----
+  - id: mahatenders
+    name: Maharashtra (mahatenders.gov.in)
+    type: gepnic
+    app_url: https://mahatenders.gov.in/nicgep/app
+    state: Maharashtra
+    hincol: plant            # Navi Mumbai (Vashi)
+    enabled: true
+  - id: up
+    name: Uttar Pradesh (etender.up.nic.in, incl. UPPWD)
+    type: gepnic
+    app_url: https://etender.up.nic.in/nicgep/app
+    state: Uttar Pradesh
+    hincol: plant            # Jhansi
+    enabled: true
+  - id: haryana
+    name: Haryana (etenders.hry.nic.in)
+    type: gepnic
+    app_url: https://etenders.hry.nic.in/nicgep/app
+    state: Haryana
+    hincol: plant            # Bahadurgarh
+    enabled: true
+  - id: tamilnadu
+    name: Tamil Nadu (tntenders.gov.in)
+    type: gepnic
+    app_url: https://tntenders.gov.in/nicgep/app
+    state: Tamil Nadu
+    hincol: plant            # Irungattukottai (Chennai)
+    enabled: true
+  - id: westbengal
+    name: West Bengal (wbtenders.gov.in)
+    type: gepnic
+    app_url: https://wbtenders.gov.in/nicgep/app
+    state: West Bengal
+    hincol: plant            # Haldia
+    enabled: true
+  - id: assam
+    name: Assam (assamtenders.gov.in)
+    type: gepnic
+    app_url: https://assamtenders.gov.in/nicgep/app
+    state: Assam
+    hincol: plant            # under construction
     enabled: true
 
-  # ---- Not yet supported (JavaScript portals, need a camofox-based adapter) ----
+  # ---- Depot / adjacent states (no plant, but HINCOL supplies via depots) ----
+  - id: mptenders
+    name: Madhya Pradesh (mptenders.gov.in)
+    type: gepnic
+    app_url: https://mptenders.gov.in/nicgep/app
+    state: Madhya Pradesh
+    hincol: depot
+    enabled: true
+  - id: odisha
+    name: Odisha (tendersodisha.gov.in)
+    type: gepnic
+    app_url: https://tendersodisha.gov.in/nicgep/app
+    state: Odisha
+    hincol: depot
+    enabled: true
+  - id: kerala
+    name: Kerala (etenders.kerala.gov.in)
+    type: gepnic
+    app_url: https://etenders.kerala.gov.in/nicgep/app
+    state: Kerala
+    hincol: depot
+    enabled: true
+  - id: jharkhand
+    name: Jharkhand (jharkhandtenders.gov.in)
+    type: gepnic
+    app_url: https://jharkhandtenders.gov.in/nicgep/app
+    state: Jharkhand
+    hincol: depot
+    enabled: true
+
+
+  # ---- All other states and union territories (GePNIC, nationwide depot reach) ----
+  - id: rajasthan
+    name: Rajasthan (eproc.rajasthan.gov.in)
+    type: gepnic
+    app_url: https://eproc.rajasthan.gov.in/nicgep/app
+    state: Rajasthan
+    hincol: depot
+    enabled: true
+  - id: uttarakhand
+    name: Uttarakhand (uktenders.gov.in)
+    type: gepnic
+    app_url: https://uktenders.gov.in/nicgep/app
+    state: Uttarakhand
+    hincol: depot
+    enabled: true
+  - id: punjab
+    name: Punjab (eproc.punjab.gov.in)
+    type: gepnic
+    app_url: https://eproc.punjab.gov.in/nicgep/app
+    state: Punjab
+    hincol: depot
+    enabled: true
+  - id: himachal
+    name: Himachal Pradesh (hptenders.gov.in)
+    type: gepnic
+    app_url: https://hptenders.gov.in/nicgep/app
+    state: Himachal Pradesh
+    hincol: depot
+    enabled: true
+  - id: delhi
+    name: Delhi (govtprocurement.delhi.gov.in)
+    type: gepnic
+    app_url: https://govtprocurement.delhi.gov.in/nicgep/app
+    state: Delhi
+    hincol: depot
+    enabled: true
+  - id: jk
+    name: Jammu & Kashmir (jktenders.gov.in)
+    type: gepnic
+    app_url: https://jktenders.gov.in/nicgep/app
+    state: Jammu & Kashmir
+    hincol: depot
+    enabled: true
+  - id: ladakh
+    name: Ladakh (tenders.ladakh.gov.in)
+    type: gepnic
+    app_url: https://tenders.ladakh.gov.in/nicgep/app
+    state: Ladakh
+    hincol: depot
+    enabled: true
+  - id: goa
+    name: Goa (eprocure.goa.gov.in)
+    type: gepnic
+    app_url: https://eprocure.goa.gov.in/nicgep/app
+    state: Goa
+    hincol: depot
+    enabled: true
+  - id: tripura
+    name: Tripura (tripuratenders.gov.in)
+    type: gepnic
+    app_url: https://tripuratenders.gov.in/nicgep/app
+    state: Tripura
+    hincol: depot
+    enabled: true
+  - id: arunachal
+    name: Arunachal Pradesh (arunachaltenders.gov.in)
+    type: gepnic
+    app_url: https://arunachaltenders.gov.in/nicgep/app
+    state: Arunachal Pradesh
+    hincol: depot
+    enabled: true
+  - id: manipur
+    name: Manipur (manipurtenders.gov.in)
+    type: gepnic
+    app_url: https://manipurtenders.gov.in/nicgep/app
+    state: Manipur
+    hincol: depot
+    enabled: true
+  - id: meghalaya
+    name: Meghalaya (meghalayatenders.gov.in)
+    type: gepnic
+    app_url: https://meghalayatenders.gov.in/nicgep/app
+    state: Meghalaya
+    hincol: depot
+    enabled: true
+  - id: mizoram
+    name: Mizoram (mizoramtenders.gov.in)
+    type: gepnic
+    app_url: https://mizoramtenders.gov.in/nicgep/app
+    state: Mizoram
+    hincol: depot
+    enabled: true
+  - id: nagaland
+    name: Nagaland (nagalandtenders.gov.in)
+    type: gepnic
+    app_url: https://nagalandtenders.gov.in/nicgep/app
+    state: Nagaland
+    hincol: depot
+    enabled: true
+  - id: sikkim
+    name: Sikkim (sikkimtender.gov.in)
+    type: gepnic
+    app_url: https://sikkimtender.gov.in/nicgep/app
+    state: Sikkim
+    hincol: depot
+    enabled: true
+  - id: chandigarh
+    name: Chandigarh (etenders.chd.nic.in)
+    type: gepnic
+    app_url: https://etenders.chd.nic.in/nicgep/app
+    state: Chandigarh
+    hincol: depot
+    enabled: true
+  - id: andaman
+    name: Andaman & Nicobar (tendersutl.gov.in)
+    type: gepnic
+    app_url: https://www.tendersutl.gov.in/nicgep/app
+    state: Andaman & Nicobar
+    hincol: depot
+    enabled: true
+  - id: dnh
+    name: Dadra & Nagar Haveli, Daman & Diu (ddtenders.gov.in)
+    type: gepnic
+    app_url: https://ddtenders.gov.in/nicgep/app
+    state: DNH & DD
+    hincol: depot
+    enabled: true
+
+  # ---- HINCOL plant states still needing a JavaScript-capable adapter ----
+  # Karnataka (Mangalore), Andhra Pradesh (Visakhapatnam) and Gujarat (Savli)
+  # are plant states but their portals are JavaScript-rendered; planned via a
+  # camofox-based adapter (see README roadmap).
+  - id: karnataka
+    name: Karnataka eProc (Mangalore plant state)
+    type: unsupported
+    app_url: https://kppp.karnataka.gov.in
+    state: Karnataka
+    hincol: plant
+    enabled: false
+  - id: andhra
+    name: Andhra Pradesh eProcurement (Visakhapatnam plant state)
+    type: unsupported
+    app_url: https://tender.apeprocurement.gov.in
+    state: Andhra Pradesh
+    hincol: plant
+    enabled: false
+  - id: gujarat
+    name: Gujarat nProcure (Savli plant state)
+    type: unsupported
+    app_url: https://www.nprocure.com
+    state: Gujarat
+    hincol: plant
+    enabled: false
+
+  # ---- Remaining states on custom (non-GePNIC) portals; need the JS adapter ----
   - id: telangana
     name: Telangana eProcurement
     type: unsupported
     app_url: https://tender.telangana.gov.in
-    enabled: false
-  - id: ap
-    name: Andhra Pradesh eProcurement
-    type: unsupported
-    app_url: https://tender.apeprocurement.gov.in
-    enabled: false
-  - id: karnataka
-    name: Karnataka eProc
-    type: unsupported
-    app_url: https://eproc.karnataka.gov.in
+    state: Telangana
+    hincol: depot
     enabled: false
   - id: chhattisgarh
     name: Chhattisgarh eProc
     type: unsupported
     app_url: https://eproc.cgstate.gov.in
+    state: Chhattisgarh
+    hincol: depot
     enabled: false
-  - id: gujarat
-    name: Gujarat (nprocure.com)
+  - id: bihar
+    name: Bihar eProcurement
     type: unsupported
-    app_url: https://www.nprocure.com
-    enabled: false
-  - id: gem
-    name: GeM bid search (goods/services)
-    type: unsupported
-    app_url: https://bidplus.gem.gov.in/all-bids
+    app_url: https://eproc2.bihar.gov.in
+    state: Bihar
+    hincol: depot
     enabled: false

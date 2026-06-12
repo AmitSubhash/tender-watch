@@ -11,23 +11,41 @@ from .config import Settings
 from .dashboard import render_dashboard
 from .db import Database
 from .filters import KeywordMatcher
-from .notify import send_new_tender_push
+from .notify import send_deadline_push, send_new_tender_push
 from .scrape import PortalStats, scrape_portal
 
 logger = logging.getLogger("tenderwatch")
 
 
+def build_matcher(settings: Settings) -> KeywordMatcher:
+    """Construct the tiered keyword matcher from settings."""
+    return KeywordMatcher(
+        settings.product_keywords,
+        settings.road_keywords,
+        settings.exclude_keywords,
+        settings.match_organisation,
+    )
+
+
 def _acquire_lock(lock_path: Path) -> bool:
-    """Create a pid lockfile; returns False when another run is alive."""
-    if lock_path.exists():
+    """Atomically create a pid lockfile; return False if another run is alive."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # O_EXCL: atomic "create only if absent", closes the TOCTOU window.
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
         try:
             other_pid = int(lock_path.read_text().strip())
             os.kill(other_pid, 0)
-            return False
+            return False  # holder still alive
         except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(str(os.getpid()))
+            lock_path.unlink(missing_ok=True)  # stale lock, reclaim
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                return False
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
     return True
 
 
@@ -48,7 +66,7 @@ def run_cycle(
     full : bool
         Drill every organisation / page regardless of stored state.
     no_notify : bool
-        Suppress the phone push for this run.
+        Suppress phone pushes for this run.
 
     Returns
     -------
@@ -63,11 +81,7 @@ def run_cycle(
         db = Database(settings.database_path)
         baseline = db.is_empty()
         db.close()
-        matcher = KeywordMatcher(
-            settings.include_keywords,
-            settings.exclude_keywords,
-            settings.match_organisation,
-        )
+        matcher = build_matcher(settings)
         portals = [
             p
             for p in settings.portals
@@ -89,15 +103,41 @@ def run_cycle(
                     stats.seen,
                     stats.new,
                 )
-        render_dashboard(settings)
-        new_matched_titles = [t for s in results for t in s.new_matched_titles]
-        if baseline:
-            logger.info(
-                "baseline run complete (%d tenders), skipping notification",
-                sum(s.new for s in results),
+
+        db = Database(settings.database_path)
+        try:
+            # Backfill tiers for any rows predating the tier column (one pass
+            # after a schema migration), so the dashboard and alerts are correct.
+            if db.count_null_tier_matched() > 0:
+                relabelled = db.rematch_all(matcher)
+                logger.info("tier backfill: relabelled, %d matched", relabelled)
+
+            render_dashboard(settings)
+
+            new_matched_titles = [t for s in results for t in s.new_matched_titles]
+            if baseline:
+                logger.info(
+                    "baseline run: %d tenders, seeding alert state, no push",
+                    sum(s.new for s in results),
+                )
+            elif not no_notify and new_matched_titles:
+                send_new_tender_push(settings, new_matched_titles, len(new_matched_titles))
+
+            # Deadline alerts ("respond at the right time"). On baseline we
+            # only seed the alerted state (no push); afterwards each tender
+            # that newly enters its deadline window is pushed exactly once.
+            closing_soon = db.tenders_closing_soon(
+                settings.deadline_road_within_days,
+                settings.deadline_product_within_days,
             )
-        elif not no_notify and new_matched_titles:
-            send_new_tender_push(settings, new_matched_titles, len(new_matched_titles))
+            if closing_soon:
+                if not baseline and not no_notify:
+                    send_deadline_push(settings, closing_soon)
+                for row in closing_soon:
+                    db.mark_deadline_alerted(row["tender_id"])
+                logger.info("deadline: %d tender(s) flagged closing-soon", len(closing_soon))
+        finally:
+            db.close()
         return results
     finally:
         lock_path.unlink(missing_ok=True)
