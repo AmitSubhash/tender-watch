@@ -1,9 +1,12 @@
-"""Portal scrapers: the GePNIC organisation-drill adapter and the CPPP feed.
+"""Portal scrapers: the GePNIC adapter and the CPPP aggregate feed.
 
-Both adapters are polite by design: requests within a portal are serial
-with a configurable delay, and the GePNIC adapter only re-fetches an
-organisation's tender list when its advertised tender count changed
-since the previous run.
+The GePNIC adapter has two modes. Normal runs use the captcha-free
+"tenders by date" listing (recent tenders, one request per portal) which
+is resilient to NIC's rate-limiting. Full runs (``--full``, scheduled
+weekly) additionally drill every organisation for the complete backlog;
+NIC soft-throttles drilling at scale, so the drill is best-effort and any
+throttled organisation is retried on the next full run. Both adapters are
+polite: requests within a portal are serial with a configurable delay.
 """
 
 from __future__ import annotations
@@ -11,13 +14,12 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from urllib.parse import urljoin
 
 import httpx
 
 from .config import PortalConfig, Settings
-from .db import IST, NOW_FORMAT, Database, now_string
+from .db import Database, now_string
 from .filters import KeywordMatcher
 from .parsing import (
     OrgEntry,
@@ -124,13 +126,106 @@ def _fetch_org_directory(
     return entries
 
 
+def _ingest_rows(
+    db: Database, portal_id: str, rows, matcher: KeywordMatcher, stats: PortalStats
+) -> None:
+    """Upsert parsed tender rows, updating seen/new stats and matched titles."""
+    for row in rows:
+        tier = matcher.tier(row.title, row.organisation)
+        is_new = db.upsert_tender(portal_id, row, tier)
+        stats.seen += 1
+        if is_new:
+            stats.new += 1
+            if tier is not None:
+                stats.new_matched_titles.append(row.title)
+
+
+def _fetch_recent_by_date(
+    client: httpx.Client, portal: PortalConfig, settings: Settings
+) -> list:
+    """Fetch the captcha-free "tenders by date" listing (recent tenders).
+
+    This is the throttle-resilient incremental route: one GET per portal,
+    no per-organisation DirectLink drilling (which NIC rate-limits at
+    scale). Returns the most recently published tenders across all
+    organisations on the portal.
+    """
+    url = f"{portal.app_url}?page=FrontEndListTendersbyDate&service=page"
+    return parse_gepnic_listing(fetch(client, url, settings))
+
+
+def _drill_all_orgs(
+    client: httpx.Client,
+    portal: PortalConfig,
+    settings: Settings,
+    matcher: KeywordMatcher,
+    db: Database,
+    stats: PortalStats,
+) -> None:
+    """Drill every organisation's full tender list (the deep backlog pass).
+
+    Expensive: one request per organisation. NIC soft-throttles this at
+    scale, so it is a best-effort weekly pass. Organisations that come back
+    as a session/error page are skipped WITHOUT storing their count, so they
+    are retried on the next full run rather than frozen out.
+    """
+    orgs = _fetch_org_directory(client, portal, settings)
+    if not orgs:
+        raise RuntimeError("organisation directory parsed to zero entries")
+    client.headers["Referer"] = (
+        f"{portal.app_url}?page=FrontEndTendersByOrganisation&service=page"
+    )
+    logger.info("[%s] full drill: %d orgs", portal.id, len(orgs))
+    for org in orgs:
+        try:
+            html = fetch(client, urljoin(portal.app_url, org.link), settings)
+            if _looks_like_session_error(html):
+                refreshed = {o.name: o for o in _fetch_org_directory(client, portal, settings)}
+                if org.name not in refreshed:
+                    continue
+                html = fetch(
+                    client, urljoin(portal.app_url, refreshed[org.name].link), settings
+                )
+                if _looks_like_session_error(html):
+                    logger.warning("[%s] org '%s' throttled; skipping", portal.id, org.name)
+                    continue
+            rows = parse_gepnic_listing(html)
+            next_link = find_next_page_link(html)
+            pages = 1
+            while next_link and pages < settings.max_org_pages:
+                html = fetch(client, urljoin(portal.app_url, next_link), settings)
+                more = parse_gepnic_listing(html)
+                if not more:
+                    break
+                rows.extend(more)
+                next_link = find_next_page_link(html)
+                pages += 1
+            if not rows:
+                logger.warning(
+                    "[%s] org '%s' (count=%d) parsed 0 rows; not storing count",
+                    portal.id,
+                    org.name,
+                    org.count,
+                )
+                continue
+            _ingest_rows(db, portal.id, rows, matcher, stats)
+            db.set_org_count(portal.id, org.name, org.count)
+        except Exception as exc:
+            logger.warning("[%s] org '%s' failed: %s", portal.id, org.name, exc)
+
+
 def scrape_gepnic_portal(
     portal: PortalConfig,
     settings: Settings,
     matcher: KeywordMatcher,
     full: bool = False,
 ) -> PortalStats:
-    """Scrape one GePNIC portal via the organisation directory.
+    """Scrape one GePNIC portal.
+
+    Normal runs use the cheap, captcha-free "by date" listing (recent
+    tenders, one request, resilient to NIC throttling). Full runs (``--full``,
+    scheduled weekly) additionally drill every organisation for the complete
+    backlog.
 
     Parameters
     ----------
@@ -141,7 +236,7 @@ def scrape_gepnic_portal(
     matcher : KeywordMatcher
         Used to flag relevant tenders at insert time.
     full : bool
-        When True, drill every organisation regardless of stored counts.
+        When True, also run the deep per-organisation backlog drill.
 
     Returns
     -------
@@ -152,105 +247,27 @@ def scrape_gepnic_portal(
     started = now_string()
     db = Database(settings.database_path)
     client = make_client(settings)
+    by_date_ok = False
     try:
-        orgs = _fetch_org_directory(client, portal, settings)
-        if not orgs:
-            raise RuntimeError("organisation directory parsed to zero entries")
-        # GePNIC validates that a DirectLink drill is reached from the listing
-        # page; set the Referer so drills look like real in-session navigation.
-        client.headers["Referer"] = (
-            f"{portal.app_url}?page=FrontEndTendersByOrganisation&service=page"
-        )
-        stored = db.get_org_state(portal.id)
-        baseline = full or not stored
-        redrill_cutoff = (
-            datetime.now(IST) - timedelta(hours=settings.force_redrill_hours)
-        ).strftime(NOW_FORMAT)
-        # Drill an org when: first ever seen, its tender count changed, OR it
-        # has not been re-checked within force_redrill_hours. The time-based
-        # re-scan catches "churn" (one tender closes as another opens, leaving
-        # the count unchanged) that a pure count-diff would silently miss.
-        targets = [
-            org
-            for org in orgs
-            if baseline
-            or org.name not in stored
-            or stored[org.name][0] != org.count
-            or stored[org.name][1] < redrill_cutoff
-        ]
-        logger.info(
-            "[%s] %d orgs listed, %d to drill%s",
-            portal.id,
-            len(orgs),
-            len(targets),
-            " (baseline)" if baseline else "",
-        )
-        for org in targets:
-            try:
-                html = fetch(client, urljoin(portal.app_url, org.link), settings)
-                if _looks_like_session_error(html):
-                    orgs_refreshed = _fetch_org_directory(client, portal, settings)
-                    refreshed = {o.name: o for o in orgs_refreshed}
-                    if org.name not in refreshed:
-                        logger.warning(
-                            "[%s] org '%s' gone after session refresh", portal.id, org.name
-                        )
-                        continue
-                    html = fetch(
-                        client, urljoin(portal.app_url, refreshed[org.name].link), settings
-                    )
-                    if _looks_like_session_error(html):
-                        logger.warning(
-                            "[%s] org '%s' still session-error; skipping (count not stored)",
-                            portal.id,
-                            org.name,
-                        )
-                        continue
-                rows = parse_gepnic_listing(html)
-                # Defensive pagination: GePNIC org listings return the full
-                # list on a single page in practice, but follow any next-page
-                # link so a future paginated portal is not silently truncated.
-                next_link = find_next_page_link(html)
-                pages = 1
-                while next_link and pages < settings.max_org_pages:
-                    html = fetch(client, urljoin(portal.app_url, next_link), settings)
-                    more = parse_gepnic_listing(html)
-                    if not more:
-                        break
-                    rows.extend(more)
-                    next_link = find_next_page_link(html)
-                    pages += 1
-                if not rows:
-                    # Zero rows for an org the directory says has tenders means a
-                    # captcha / structural change. Do NOT store the count, so the
-                    # org is retried next run instead of being frozen out.
-                    logger.warning(
-                        "[%s] org '%s' (count=%d) parsed 0 rows; not storing count",
-                        portal.id,
-                        org.name,
-                        org.count,
-                    )
-                    continue
-                if len(rows) < org.count:
-                    logger.info(
-                        "[%s] org '%s': parsed %d of %d tenders",
-                        portal.id,
-                        org.name,
-                        len(rows),
-                        org.count,
-                    )
-                for row in rows:
-                    tier = matcher.tier(row.title, row.organisation)
-                    is_new = db.upsert_tender(portal.id, row, tier)
-                    stats.seen += 1
-                    if is_new:
-                        stats.new += 1
-                        if tier is not None:
-                            stats.new_matched_titles.append(row.title)
-                db.set_org_count(portal.id, org.name, org.count)
-            except Exception as exc:
-                logger.warning("[%s] org '%s' failed: %s", portal.id, org.name, exc)
-        stats.status = "ok"
+        # Incremental every run: recent tenders, drill-free and captcha-free.
+        try:
+            recent = _fetch_recent_by_date(client, portal, settings)
+            _ingest_rows(db, portal.id, recent, matcher, stats)
+            by_date_ok = True
+            logger.info(
+                "[%s] by-date: %d recent rows, %d new", portal.id, len(recent), stats.new
+            )
+        except Exception as exc:
+            stats.error = f"by-date fetch failed: {exc}"
+            logger.warning("[%s] by-date listing failed: %s", portal.id, exc)
+
+        # Deep backlog only on demand (weekly): per-org drilling at scale.
+        if full:
+            _drill_all_orgs(client, portal, settings, matcher, db, stats)
+
+        # "ok" if the cheap listing loaded (even with zero recent tenders) or we
+        # ingested rows from the drill; "error" only if the portal gave nothing.
+        stats.status = "ok" if (by_date_ok or stats.seen > 0) else "error"
     except Exception as exc:
         stats.status = "error"
         stats.error = str(exc)
