@@ -167,6 +167,13 @@ portals:
     state: National
     hincol: national
     enabled: true
+  - id: eprocure_central
+    name: CPPP eProcure central (DDA, central ministries, ports)
+    type: gepnic
+    app_url: https://eprocure.gov.in/eprocure/app
+    state: National
+    hincol: national
+    enabled: true
   - id: defproc
     name: Defence Procurement (BRO, MES via defproc.gov.in)
     type: gepnic
