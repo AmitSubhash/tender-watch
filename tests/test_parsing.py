@@ -6,8 +6,21 @@ from tenderwatch.parsing import (
     parse_cppp_listing,
     parse_gepnic_datetime,
     parse_gepnic_listing,
+    parse_msrdc_listing,
     parse_org_directory,
 )
+
+MSRDC_HTML = """
+<table id="SitePH_grdTendersList">
+  <tr><th>&nbsp;</th><th>Sr.No.</th><th>Department Name</th><th>Tender No</th>
+    <th>Tender Name</th><th>Publication Date</th><th>Last Submission Date</th>
+    <th>File Size(MB)</th><th>View/Download</th></tr>
+  <tr><td>1</td><td>Construction</td><td>T 2901</td>
+    <td>Widening and strengthening of Samruddhi Mahamarg approach road</td>
+    <td>10/06/2026</td><td>28/06/2026</td><td>1.2</td>
+    <td><a href="/Site/Upload/Tender/t2901.pdf">Download</a></td></tr>
+</table>
+"""
 
 ORG_DIRECTORY_HTML = """
 <table class="list_table" id="table">
@@ -86,6 +99,18 @@ def test_parse_gepnic_listing() -> None:
     assert row.published == "2026-06-12 10:00"
     assert row.closing == "2026-06-17 10:00"
     assert "Greater Mumbai" in row.organisation
+
+
+def test_parse_msrdc_listing() -> None:
+    rows = parse_msrdc_listing(MSRDC_HTML)
+    assert len(rows) == 1
+    row = rows[0]
+    assert "Samruddhi" in row.title
+    assert row.ref_no == "T 2901"
+    assert row.organisation == "MSRDC - Construction"
+    assert row.published == "2026-06-10 00:00"
+    assert row.closing == "2026-06-28 23:59"
+    assert row.url == "https://msrdc.in/Site/Upload/Tender/t2901.pdf"
 
 
 def test_parse_cppp_listing() -> None:

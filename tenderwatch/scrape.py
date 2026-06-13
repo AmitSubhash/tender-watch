@@ -26,6 +26,7 @@ from .parsing import (
     find_next_page_link,
     parse_cppp_listing,
     parse_gepnic_listing,
+    parse_msrdc_listing,
     parse_org_directory,
 )
 
@@ -340,6 +341,39 @@ def scrape_cppp_feed(
     return stats
 
 
+def scrape_msrdc_portal(
+    portal: PortalConfig,
+    settings: Settings,
+    matcher: KeywordMatcher,
+    full: bool = False,
+) -> PortalStats:
+    """Scrape MSRDC's server-rendered tender grid (one GET, no drilling).
+
+    MSRDC (Maharashtra State Road Development Corp) runs a custom ASP.NET
+    portal, not GePNIC, but its TenderView page is server-rendered so a
+    plain HTTP fetch works. Low volume, high value (expressways, toll).
+    """
+    stats = PortalStats(portal=portal.id)
+    started = now_string()
+    db = Database(settings.database_path)
+    client = make_client(settings)
+    try:
+        html = fetch(client, portal.list_url, settings)
+        rows = parse_msrdc_listing(html)
+        _ingest_rows(db, portal.id, rows, matcher, stats)
+        logger.info("[%s] msrdc: %d rows, %d new", portal.id, len(rows), stats.new)
+        stats.status = "ok"
+    except Exception as exc:
+        stats.status = "error"
+        stats.error = str(exc)
+        logger.error("[%s] portal failed: %s", portal.id, exc)
+    finally:
+        db.record_run(portal.id, started, stats.status, stats.seen, stats.new, stats.error)
+        db.close()
+        client.close()
+    return stats
+
+
 def scrape_portal(
     portal: PortalConfig,
     settings: Settings,
@@ -351,4 +385,6 @@ def scrape_portal(
         return scrape_gepnic_portal(portal, settings, matcher, full)
     if portal.type == "cppp":
         return scrape_cppp_feed(portal, settings, matcher, full)
+    if portal.type == "msrdc":
+        return scrape_msrdc_portal(portal, settings, matcher, full)
     return PortalStats(portal=portal.id, status="skipped", error="unsupported type")

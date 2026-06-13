@@ -255,6 +255,71 @@ def parse_cppp_listing(
     return rows
 
 
+def _msrdc_date(text: str, end_of_day: bool = False) -> str | None:
+    """Convert an MSRDC ``DD/MM/YYYY`` date to the stored minute format."""
+    try:
+        dt = datetime.strptime(text.strip(), "%d/%m/%Y")
+    except ValueError:
+        return None
+    return dt.strftime("%Y-%m-%d ") + ("23:59" if end_of_day else "00:00")
+
+
+def parse_msrdc_listing(html: str, base_url: str = "https://msrdc.in") -> list[TenderRow]:
+    """Parse the MSRDC (Maharashtra State Road Development Corp) tender grid.
+
+    MSRDC publishes a server-rendered ASP.NET table (``SitePH_grdTendersList``)
+    with columns: Sr.No, Department, Tender No, Tender Name, Publication Date,
+    Last Submission Date, File Size, View/Download. Dates are ``DD/MM/YYYY``.
+
+    Parameters
+    ----------
+    html : str
+        Full page HTML of TenderView.aspx.
+    base_url : str
+        Origin used to absolutise the download link.
+
+    Returns
+    -------
+    list of TenderRow
+        Parsed MSRDC tenders (organisation prefixed "MSRDC").
+    """
+    soup = BeautifulSoup(html, "lxml")
+    table = soup.find("table", id=lambda v: bool(v) and "grdTendersList" in v)
+    rows: list[TenderRow] = []
+    if table is None:
+        return rows
+    for tr in table.find_all("tr"):
+        cells = tr.find_all("td")
+        if len(cells) < 7:
+            continue
+        published = _msrdc_date(cells[4].get_text(strip=True))
+        closing = _msrdc_date(cells[5].get_text(strip=True), end_of_day=True)
+        if published is None and closing is None:
+            continue  # header / non-data row
+        department = cells[1].get_text(" ", strip=True)
+        tender_no = cells[2].get_text(" ", strip=True)
+        title = cells[3].get_text(" ", strip=True)
+        if not title:
+            continue
+        anchor = cells[-1].find("a", href=True)
+        url = urljoin(base_url, str(anchor["href"])) if anchor else None
+        if url is not None and not url.startswith(("http://", "https://")):
+            url = None
+        rows.append(
+            TenderRow(
+                tender_id=fallback_tender_id(tender_no, title, "msrdc"),
+                title=title,
+                ref_no=tender_no,
+                organisation=f"MSRDC - {department}" if department else "MSRDC",
+                published=published,
+                closing=closing,
+                opening=None,
+                url=url,
+            )
+        )
+    return rows
+
+
 def find_next_page_link(html: str) -> str | None:
     """Find a "Next" pagination link on a GePNIC listing page, if any.
 

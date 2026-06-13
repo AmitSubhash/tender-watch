@@ -369,6 +369,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   .kwchip{{padding:5px 11px;border:1px solid var(--border);border-radius:999px;cursor:pointer;
     background:#fff;font-size:12.5px;color:var(--ink)}}
   .kwchip.active{{background:var(--product);color:#fff;border-color:var(--product)}}
+  .sortchip{{padding:5px 11px;border:1px solid var(--border);border-radius:999px;cursor:pointer;
+    background:#fff;font-size:12.5px;color:var(--ink)}}
+  .sortchip.active{{background:var(--accent);color:#fff;border-color:var(--accent)}}
   table{{width:100%;border-collapse:collapse;background:var(--panel);
     border:1px solid var(--border);border-radius:12px;overflow:hidden}}
   th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
@@ -430,16 +433,23 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <button data-close="14">&le;14d</button>
         <button data-close="open">Open only</button>
       </span>
-      <span class="grp" id="gSort">
-        <button class="active" data-sort="new">Newest</button>
-        <button data-sort="close">Closing soon</button>
-      </span>
       <span id="count" class="count"></span>
       <button id="reset" class="reset" onclick="resetFilters()">Reset</button>
     </div>
     <div class="controls kwrow">
       <span class="kwlabel">Keywords:</span>
       <span class="grp-kw" id="gKw">{keyword_chips}</span>
+    </div>
+    <div class="controls kwrow">
+      <span class="kwlabel">Sort by (click multiple, in order):</span>
+      <span class="grp-kw" id="gSort">
+        <button class="sortchip" data-sort="product">Product first</button>
+        <button class="sortchip" data-sort="plant">Plant state first</button>
+        <button class="sortchip" data-sort="closing">Closing soonest</button>
+        <button class="sortchip" data-sort="newest">Newest</button>
+        <button class="sortchip" data-sort="value">Highest days left</button>
+        <button class="sortchip" data-sort="state">State A-Z</button>
+      </span>
     </div>
   </div>
   <table id="tenders">
@@ -497,20 +507,47 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   function setClose(c){{close=c;pickGroup('gClose','close',c);apply();}}
   function rebuildKw(){{kwActive=[...$('gKw').querySelectorAll('.kwchip.active')]
     .map(b=>new RegExp(b.dataset.rx,'i'));}}
-  function sortRows(m){{const rows=Array.from(tbody.rows);
-    rows.sort((a,b)=>m==='new'?(b.dataset.seen||'').localeCompare(a.dataset.seen||'')
-      :(parseFloat(a.dataset.days)||1e9)-(parseFloat(b.dataset.days)||1e9));
+  // ---- multi-key sort: pick several keys; they apply in the order clicked ----
+  let sortKeys=[];
+  const num=v=>{{const x=parseFloat(v);return isNaN(x)?1e9:x;}};
+  const CMP={{
+    product:(a,b)=>((b.dataset.tier==='product')-(a.dataset.tier==='product')),
+    plant:(a,b)=>((b.dataset.plant==='1')-(a.dataset.plant==='1')),
+    closing:(a,b)=>num(a.dataset.days)-num(b.dataset.days),
+    newest:(a,b)=>(b.dataset.seen||'').localeCompare(a.dataset.seen||''),
+    value:(a,b)=>num(b.dataset.days)-num(a.dataset.days),
+    state:(a,b)=>(a.dataset.state||'').localeCompare(b.dataset.state||''),
+  }};
+  function applySort(){{
+    if(!sortKeys.length) return;
+    const rows=Array.from(tbody.rows);
+    rows.sort((a,b)=>{{for(const k of sortKeys){{const c=CMP[k](a,b);if(c)return c;}}return 0;}});
     rows.forEach(r=>tbody.appendChild(r));
-    pickGroup('gSort','sort',m);}}
+  }}
+  function toggleSort(k){{
+    const i=sortKeys.indexOf(k);
+    if(i>=0) sortKeys.splice(i,1); else sortKeys.push(k);
+    for(const b of $('gSort').children){{
+      const base=b.dataset.label||(b.dataset.label=b.textContent);
+      const idx=sortKeys.indexOf(b.dataset.sort);
+      b.classList.toggle('active', idx>=0);
+      b.textContent = idx>=0 ? (idx+1)+'. '+base : base;
+    }}
+    applySort();
+  }}
   function resetFilters(){{search.value='';$('fState').value='';$('fPlant').checked=false;
     $('gKw').querySelectorAll('.kwchip.active').forEach(b=>b.classList.remove('active'));
-    kwActive=[];setTier('all');setClose('any');}}
+    kwActive=[];sortKeys=[];
+    for(const b of $('gSort').children){{b.classList.remove('active');
+      if(b.dataset.label)b.textContent=b.dataset.label;}}
+    setTier('all');setClose('any');}}
   $('gTier').onclick=e=>{{if(e.target.dataset.tier)setTier(e.target.dataset.tier);}};
   $('gClose').onclick=e=>{{if(e.target.dataset.close)setClose(e.target.dataset.close);}};
-  $('gSort').onclick=e=>{{if(e.target.dataset.sort)sortRows(e.target.dataset.sort);}};
+  $('gSort').onclick=e=>{{if(e.target.dataset.sort)toggleSort(e.target.dataset.sort);}};
   $('gKw').onclick=e=>{{if(e.target.classList.contains('kwchip')){{
     e.target.classList.toggle('active');rebuildKw();apply();}}}};
   $('fState').onchange=apply; $('fPlant').onchange=apply; search.addEventListener('input',apply);
+  toggleSort('product');toggleSort('closing');  // sensible default: product first, then soonest
   apply();
 </script>
 </body>

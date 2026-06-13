@@ -197,6 +197,13 @@ portals:
     state: Maharashtra
     hincol: plant            # Navi Mumbai (Vashi)
     enabled: true
+  - id: msrdc
+    name: MSRDC (Maharashtra State Road Dev Corp - expressways, toll)
+    type: msrdc              # custom ASP.NET portal, server-rendered (httpx)
+    list_url: https://msrdc.in/site/common/TenderView.aspx
+    state: Maharashtra
+    hincol: plant
+    enabled: true
   - id: up
     name: Uttar Pradesh (etender.up.nic.in, incl. UPPWD)
     type: gepnic
