@@ -174,20 +174,31 @@ def _tender_row(
     row: sqlite3.Row, new_cutoff: str, now: datetime, meta: dict[str, PortalConfig]
 ) -> str:
     title = html.escape(row["title"] or "(untitled)")
-    url = (
+    portal_meta = meta.get(row["portal"])
+    # Every row gets a link: a stable deep link where we have one (CPPP/MSRDC),
+    # otherwise the portal's search page (GePNIC detail links are session-bound,
+    # so the user pastes the visible tender id there).
+    deep = (
         row["url"]
         if row["url"] and str(row["url"]).startswith(("http://", "https://"))
         else None
     )
+    if deep:
+        link = deep
+    elif portal_meta and portal_meta.app_url:
+        link = f"{portal_meta.app_url}?page=FrontEndAdvancedSearch&service=page"
+    elif portal_meta and portal_meta.list_url:
+        link = portal_meta.list_url
+    else:
+        link = None
     title_html = (
-        f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{title}</a>'
-        if url
+        f'<a href="{html.escape(link)}" target="_blank" rel="noopener">{title}</a>'
+        if link
         else title
     )
     ref = html.escape(row["ref_no"] or "")
     tender_id = html.escape(row["tender_id"])
     org = html.escape(row["organisation"] or "")
-    portal_meta = meta.get(row["portal"])
     state = portal_meta.state if portal_meta else ""
     is_plant = bool(portal_meta and portal_meta.hincol == "plant")
     state_html = f'<span class="state">{html.escape(state)}</span>'
@@ -434,6 +445,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <button data-close="open">Open only</button>
       </span>
       <span id="count" class="count"></span>
+      <button class="reset" onclick="exportCSV()">&#8615; CSV</button>
       <button id="reset" class="reset" onclick="resetFilters()">Reset</button>
     </div>
     <div class="controls kwrow">
@@ -546,6 +558,23 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   $('gSort').onclick=e=>{{if(e.target.dataset.sort)toggleSort(e.target.dataset.sort);}};
   $('gKw').onclick=e=>{{if(e.target.classList.contains('kwchip')){{
     e.target.classList.toggle('active');rebuildKw();apply();}}}};
+  // ---- export the currently-filtered rows to CSV (for the bid team) ----
+  function exportCSV(){{
+    const q=v=>'"'+String(v).replace(/"/g,'""').replace(/\\s+/g,' ').trim()+'"';
+    const out=[['Title','Organisation','State','Tier','Published','Closing','Days left','Tender ID','Link'].join(',')];
+    for(const tr of tbody.rows){{
+      if(tr.style.display==='none') continue;
+      const a=tr.cells[1].querySelector('a');
+      const idspan=tr.cells[1].querySelector('.muted');
+      const title=(a?a.textContent:tr.cells[1].firstChild.textContent)||'';
+      out.push([q(title),q(tr.cells[2].textContent),q(tr.dataset.state),q(tr.dataset.tier),
+        q(tr.cells[4].textContent),q(tr.cells[5].textContent),q(tr.cells[6].textContent),
+        q(idspan?idspan.textContent:''),q(a?a.href:'')].join(','));
+    }}
+    const blob=new Blob([out.join('\\n')],{{type:'text/csv;charset=utf-8'}});
+    const u=URL.createObjectURL(blob),el=document.createElement('a');
+    el.href=u; el.download='hincol-tenders.csv'; el.click(); URL.revokeObjectURL(u);
+  }}
   $('fState').onchange=apply; $('fPlant').onchange=apply; search.addEventListener('input',apply);
   toggleSort('product');toggleSort('closing');  // sensible default: product first, then soonest
   apply();
