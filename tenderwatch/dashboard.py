@@ -19,15 +19,18 @@ from .db import IST, NOW_FORMAT, Database
 # ---------------------------------------------------------------------------
 # colour system
 # ---------------------------------------------------------------------------
-C_INK = "#14233a"
-C_MUTED = "#64748b"
-C_ACCENT = "#0b5fa5"
-C_PRODUCT = "#c2410c"
-C_ROAD = "#64748b"
-C_RED = "#dc2626"
-C_AMBER = "#d97706"
-C_GREEN = "#059669"
-C_GRID = "#e7edf4"
+# Palette inspired by sychedelic.com: warm cream ground, near-black ink, a
+# strong red accent and a deep-green secondary (editorial, premium).
+C_INK = "#1a1a1a"
+C_MUTED = "#6b6b63"
+C_ACCENT = "#c40601"  # red: brand / urgent / plant-state highlight
+C_PRODUCT = "#2e4036"  # deep green: product tier
+C_ROAD = "#b4b0a4"  # warm grey: road bars
+C_RED = "#c40601"
+C_AMBER = "#e6a800"  # golden (HINCOL/Colas yellow) for mid-urgency chart bars
+C_GREEN = "#2e4036"
+C_GRID = "#e3e0d6"
+C_YELLOW = "#f5b400"  # HINCOL/Colas brand yellow
 
 # Quick keyword-filter chips shown on the dashboard. Each is (label, regex
 # tested case-insensitively against the tender title). Tweak freely.
@@ -65,7 +68,7 @@ def _days_left(closing: str | None, now: datetime) -> float | None:
 
 
 def _urgency_colour(days: float) -> str:
-    return C_RED if days < 3 else (C_AMBER if days < 7 else C_ACCENT)
+    return C_RED if days < 3 else (C_AMBER if days < 7 else C_GREEN)
 
 
 def _svg_closing_histogram(rows: list[sqlite3.Row], now: datetime) -> str:
@@ -121,7 +124,7 @@ def _svg_state_bars(state_counts: list[tuple[str, int, bool]]) -> str:
     for i, (state, count, is_plant) in enumerate(top):
         y = i * row_h + 4
         bw = max(2, (count / peak) * bar_max)
-        colour = C_PRODUCT if is_plant else C_ACCENT
+        colour = C_ACCENT if is_plant else C_INK
         star = " ★" if is_plant else ""
         parts.append(
             f'<text x="0" y="{y + 11}" font-size="10.5" fill="{C_INK}">'
@@ -327,82 +330,90 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="900">
 <title>{brand}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {{
-    --bg:#eef2f7; --panel:#ffffff; --ink:#14233a; --muted:#64748b;
-    --accent:#0b5fa5; --product:#c2410c; --new:#059669; --warn:#d97706;
-    --danger:#dc2626; --border:#dce4ee;
+    --bg:#f2f0e9; --panel:#fbfaf5; --ink:#1a1a1a; --muted:#6b6b63;
+    --accent:#c40601; --product:#2e4036; --warn:#b45309; --danger:#c40601;
+    --yellow:#f5b400; --border:#e3e0d6; --line:#ece9df;
+    --sans:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+    --serif:'Cormorant Garamond',Georgia,'Times New Roman',serif;
+    --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
   }}
   *{{box-sizing:border-box}}
-  body{{margin:0;font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
-    background:var(--bg);color:var(--ink)}}
-  header{{background:linear-gradient(110deg,#0a2540,#0b3a66 60%,#0b5fa5);
-    color:#fff;padding:18px 28px}}
-  header .row{{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
-    max-width:1340px;margin:0 auto}}
-  header h1{{margin:0;font-size:20px;font-weight:700;letter-spacing:.2px}}
-  header .sub{{color:#aec6e2;font-size:12.5px}}
-  main{{max-width:1340px;margin:0 auto;padding:20px 28px 64px}}
-  .kpis{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}}
-  .kpi{{background:var(--panel);border:1px solid var(--border);border-radius:12px;
-    padding:14px 16px}}
-  .kpi .n{{font-size:27px;font-weight:750;line-height:1}}
-  .kpi .l{{color:var(--muted);font-size:11.5px;margin-top:5px;text-transform:uppercase;
-    letter-spacing:.04em}}
-  .kpi.hero{{background:linear-gradient(180deg,#fff,#fff6ef);border-color:#f2c9a6}}
-  .kpi.hero .n{{color:var(--danger)}}
+  body{{margin:0;font:15px/1.5 var(--sans);background:var(--bg);color:var(--ink);
+    -webkit-font-smoothing:antialiased}}
+  header{{background:#1a1a1a;color:#f2f0e9;padding:20px 28px;border-bottom:4px solid var(--yellow)}}
+  header .row{{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;max-width:1340px;margin:0 auto}}
+  header h1{{margin:0;font-size:22px;font-weight:800;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}}
+  header h1::before{{content:'';width:13px;height:13px;background:var(--yellow);border-radius:2px}}
+  header .sub{{color:#a9a499;font-size:12.5px}}
+  header .sub.mono{{font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;font-size:11px;color:#8f8a7f}}
+  main{{max-width:1340px;margin:0 auto;padding:24px 28px 64px}}
+  .kpis{{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}}
+  .kpi{{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 18px;
+    box-shadow:inset 0 3px 0 var(--yellow)}}
+  .kpi .n{{font-family:var(--serif);font-size:42px;font-weight:600;line-height:.95;letter-spacing:-.01em}}
+  .kpi .l{{color:var(--muted);font-family:var(--mono);font-size:10px;margin-top:7px;
+    text-transform:uppercase;letter-spacing:.1em}}
+  .kpi.hero{{border-color:var(--accent);box-shadow:inset 0 3px 0 var(--accent)}}
+  .kpi.hero .n{{color:var(--accent)}}
   .kpi .n.prod{{color:var(--product)}}
-  .charts{{display:grid;grid-template-columns:1.35fr 1.3fr .9fr;gap:12px;margin-bottom:18px}}
-  .panel{{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px}}
-  .panel h3{{margin:0 0 10px;font-size:12.5px;color:var(--muted);text-transform:uppercase;
-    letter-spacing:.05em;font-weight:650}}
-  .filterbar{{background:var(--panel);border:1px solid var(--border);border-radius:12px;
-    padding:12px 14px;margin-bottom:14px}}
+  .charts{{display:grid;grid-template-columns:1.35fr 1.3fr .9fr;gap:14px;margin-bottom:20px}}
+  .panel{{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 18px}}
+  .panel h3{{margin:0 0 12px;font-family:var(--mono);font-size:10.5px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.12em;font-weight:500}}
+  .filterbar{{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:16px}}
   .controls{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
-  .controls+.controls{{margin-top:9px}}
-  .controls input[type=search]{{flex:1 1 280px;padding:9px 13px;border:1px solid var(--border);
-    border-radius:9px;font-size:14px;background:#fff}}
-  .controls select{{padding:8px 11px;border:1px solid var(--border);border-radius:9px;
-    font-size:13px;background:#fff;color:var(--ink);max-width:200px}}
-  .chk{{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--product);
-    padding:7px 10px;border:1px solid var(--border);border-radius:9px;cursor:pointer;font-weight:600}}
-  .grp{{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}}
-  .grp button{{padding:7px 11px;border:0;border-right:1px solid var(--border);cursor:pointer;
-    background:#fff;font-size:12.5px;color:var(--ink)}}
+  .controls+.controls{{margin-top:10px}}
+  .controls input[type=search]{{flex:1 1 280px;padding:10px 13px;border:1px solid var(--border);
+    border-radius:10px;font-size:14px;font-family:var(--sans);background:#fff;color:var(--ink)}}
+  .controls select{{padding:9px 11px;border:1px solid var(--border);border-radius:10px;
+    font-size:13px;background:#fff;color:var(--ink);max-width:210px;font-family:var(--sans)}}
+  .chk{{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--accent);
+    padding:8px 11px;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-weight:600}}
+  .grp{{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff}}
+  .grp button{{padding:8px 12px;border:0;border-right:1px solid var(--border);cursor:pointer;
+    background:transparent;font-size:12.5px;color:var(--ink);font-family:var(--sans)}}
   .grp button:last-child{{border-right:0}}
-  .grp button.active{{background:var(--accent);color:#fff}}
-  .count{{font-size:12.5px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}}
-  .reset{{padding:7px 11px;border:1px solid var(--border);border-radius:9px;cursor:pointer;
-    background:#fff;font-size:12.5px;color:var(--muted)}}
-  .kwrow{{border-top:1px dashed var(--border);padding-top:9px}}
-  .kwlabel{{font-size:12px;color:var(--muted);font-weight:600;align-self:center}}
-  .grp-kw{{display:inline-flex;gap:6px;flex-wrap:wrap}}
-  .kwchip{{padding:5px 11px;border:1px solid var(--border);border-radius:999px;cursor:pointer;
-    background:#fff;font-size:12.5px;color:var(--ink)}}
+  .grp button.active{{background:var(--ink);color:var(--bg)}}
+  .count{{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:auto}}
+  .reset{{padding:8px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;
+    background:#fff;font-size:12px;color:var(--muted);font-family:var(--sans)}}
+  .kwrow{{border-top:1px solid var(--line);padding-top:11px}}
+  .kwlabel{{font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.1em;align-self:center}}
+  .grp-kw{{display:inline-flex;gap:7px;flex-wrap:wrap}}
+  .kwchip,.sortchip{{padding:6px 12px;border:1px solid var(--border);border-radius:999px;cursor:pointer;
+    background:#fff;font-size:12.5px;color:var(--ink);font-family:var(--sans)}}
   .kwchip.active{{background:var(--product);color:#fff;border-color:var(--product)}}
-  .sortchip{{padding:5px 11px;border:1px solid var(--border);border-radius:999px;cursor:pointer;
-    background:#fff;font-size:12.5px;color:var(--ink)}}
   .sortchip.active{{background:var(--accent);color:#fff;border-color:var(--accent)}}
   table{{width:100%;border-collapse:collapse;background:var(--panel);
-    border:1px solid var(--border);border-radius:12px;overflow:hidden}}
-  th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
-    color:var(--muted);padding:11px 12px;border-bottom:2px solid var(--border);
-    background:#f7fafd;position:sticky;top:0}}
-  td{{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}}
-  tr:hover td{{background:#f1f6fc}}
-  .badge{{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;
-    font-weight:700;margin-right:4px}}
-  .badge.new{{background:#d1fae5;color:var(--new)}}
-  .badge.product{{background:#fde7d3;color:var(--product)}}
-  .badge.road{{background:#e8edf3;color:#52617a}}
-  .state{{font-weight:600}} .plant{{color:var(--product)}}
-  .days{{font-weight:750;white-space:nowrap}}
-  .days.red{{color:var(--danger)}} .days.amber{{color:var(--warn)}} .days.green{{color:var(--new)}}
+    border:1px solid var(--border);border-radius:14px;overflow:hidden}}
+  th{{text-align:left;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--muted);padding:12px;border-bottom:1px solid var(--border);background:#f4f1e8;
+    position:sticky;top:0;font-weight:500}}
+  td{{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}}
+  tr:hover td{{background:#f4f1e8}}
+  #tenders td:nth-child(5),#tenders td:nth-child(6){{font-family:var(--mono);font-size:11.5px;color:var(--muted)}}
+  td .muted{{font-family:var(--mono);font-size:11px}}
+  .badge{{display:inline-block;padding:2px 7px;border-radius:4px;font-size:9.5px;font-weight:700;
+    margin-right:4px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em}}
+  .badge.new{{background:#dfeae0;color:var(--product)}}
+  .badge.product{{background:var(--product);color:#fff}}
+  .badge.road{{background:#eceadf;color:#6b6b63}}
+  .state{{font-weight:600}} .plant{{color:var(--accent)}}
+  .days{{font-family:var(--mono);font-weight:600;white-space:nowrap}}
+  .days.red{{color:var(--danger)}} .days.amber{{color:var(--warn)}} .days.green{{color:var(--product)}}
   .muted{{color:var(--muted);font-size:12px}}
-  a{{color:var(--accent);text-decoration:none}} a:hover{{text-decoration:underline}}
-  h2{{font-size:15px;margin:26px 0 10px}}
-  .health td,.health th{{padding:6px 12px;font-size:12.5px}}
-  .ok{{color:var(--new);font-weight:600}} .error{{color:var(--danger);font-weight:600}}
+  a{{color:var(--ink);text-decoration:underline;text-decoration-color:#cfcabb;text-underline-offset:2px}}
+  a:hover{{text-decoration-color:var(--accent);color:var(--accent)}}
+  h2{{font-family:var(--serif);font-size:25px;font-weight:600;margin:30px 0 12px;letter-spacing:-.01em}}
+  .health td,.health th{{padding:7px 12px;font-size:12px}}
+  .health td{{font-family:var(--mono);font-size:11.5px}}
+  .ok{{color:var(--product);font-weight:600}} .error{{color:var(--danger);font-weight:600}}
   @media(max-width:900px){{.kpis{{grid-template-columns:repeat(2,1fr)}}.charts{{grid-template-columns:1fr}}}}
 </style>
 </head>
@@ -422,7 +433,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   </div>
   <div class="charts">
     <div class="panel"><h3>Bid deadlines &mdash; tenders closing per day (next 14d)</h3>{hist_svg}</div>
-    <div class="panel"><h3>Open tenders by state &nbsp;<span style="color:#c2410c">&#9733; plant</span></h3>{states_svg}</div>
+    <div class="panel"><h3>Open tenders by state &nbsp;<span style="color:#c40601">&#9733; plant</span></h3>{states_svg}</div>
     <div class="panel"><h3>Product vs road</h3>{donut_svg}</div>
   </div>
   <div class="filterbar">
